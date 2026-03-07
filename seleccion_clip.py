@@ -46,6 +46,11 @@ try:
     import imageio_ffmpeg
 except Exception:
     imageio_ffmpeg = None
+
+try:
+    from pytubefix import YouTube
+except Exception:
+    YouTube = None
 # CONFIG
 def _env_flag(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -202,24 +207,90 @@ def download_youtube_video_with_yt_dlp(url: str, output_folder: str, filename: s
         ],
     ]
 
-    try:
-        last_error = None
-        for idx, command in enumerate(commands, start=1):
-            print(f"[+] Intento yt-dlp {idx}/{len(commands)}")
+    def _run_commands(command_list, group_name: str):
+        last_error_local = None
+        for idx, command in enumerate(command_list, start=1):
+            print(f"[+] Intento {group_name} {idx}/{len(command_list)}")
             try:
-                subprocess.run(command, check=True)
                 if os.path.exists(output_path):
+                    os.remove(output_path)
+                subprocess.run(command, check=True)
+                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
                     print("[OK] Descarga completada.")
-                    return output_path
-            except subprocess.CalledProcessError as e:
-                last_error = e
+                    return True, None
+            except Exception as e:
+                last_error_local = e
                 continue
+        return False, last_error_local
 
-        if os.path.exists(output_path):
-            print("[OK] Descarga completada.")
+    try:
+        ok, last_error = _run_commands(commands, "yt-dlp")
+        if ok:
             return output_path
 
-        raise RuntimeError(f"yt-dlp no pudo descargar el video. Ultimo error: {last_error}")
+        # Fallback 1: mirrors Invidious para evitar bloqueos directos de YouTube en IPs cloud.
+        if video_id_match:
+            video_id = video_id_match.group(0)
+            mirrors_env = os.getenv("INVIDIOUS_MIRRORS", "").strip()
+            mirror_hosts = [h.strip() for h in mirrors_env.split(",") if h.strip()] if mirrors_env else [
+                "yewtu.be",
+                "invidious.privacydev.net",
+                "invidious.fdn.fr",
+            ]
+
+            mirror_commands = []
+            for host in mirror_hosts:
+                watch_url = f"https://{host}/watch?v={video_id}"
+                mirror_commands.append(base_args + ["-f", "b", watch_url, "-o", output_path])
+                mirror_commands.append(base_args + ["-f", "best", watch_url, "-o", output_path])
+
+            ok, mirror_error = _run_commands(mirror_commands, "invidious")
+            if ok:
+                return output_path
+            if mirror_error is not None:
+                last_error = mirror_error
+
+        # Fallback 2: pytubefix (si esta disponible).
+        if YouTube is not None:
+            try:
+                print("[+] Intento fallback pytubefix...")
+                yt = YouTube(normalized_url)
+                stream = (
+                    yt.streams
+                    .filter(progressive=True, file_extension="mp4")
+                    .order_by("resolution")
+                    .desc()
+                    .first()
+                )
+                if stream is None:
+                    stream = (
+                        yt.streams
+                        .filter(file_extension="mp4")
+                        .order_by("resolution")
+                        .desc()
+                        .first()
+                    )
+
+                if stream is not None:
+                    if os.path.exists(output_path):
+                        os.remove(output_path)
+                    downloaded = stream.download(output_path=output_folder, filename=filename)
+                    if downloaded and os.path.exists(downloaded):
+                        if downloaded != output_path:
+                            if os.path.exists(output_path):
+                                os.remove(output_path)
+                            os.replace(downloaded, output_path)
+                        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                            print("[OK] Descarga completada con pytubefix.")
+                            return output_path
+            except Exception as e:
+                last_error = e
+
+        raise RuntimeError(
+            "No se pudo descargar desde URL. "
+            f"Ultimo error: {last_error}. "
+            "Si persiste en cloud, define YTDLP_COOKIES_FILE o usa Upload."
+        )
     except FileNotFoundError:
         print("ERROR: 'yt-dlp' no encontrado. Instalala: pip install yt-dlp")
         sys.exit(1)
