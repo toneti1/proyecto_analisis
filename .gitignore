@@ -1,0 +1,40 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Virtual environments
+env/
+.venv/
+venv/
+env_clips_act/
+
+# Local app/browser cache
+user_data/
+
+# Generated media outputs
+clips/
+clips_editados/
+
+# Large media assets (keep only if truly required)
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.wav
+*.mp3
+
+# Logs and local data
+processed_videos.txt
+*.log
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local backups
+backups/
