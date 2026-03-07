@@ -40,6 +40,10 @@ try:
 except Exception:
     parselmouth = None
 
+try:
+    import imageio_ffmpeg
+except Exception:
+    imageio_ffmpeg = None
 # CONFIG
 def _env_flag(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -69,7 +73,19 @@ SLIDING_STEP_S = _env_int("SLIDING_STEP_S", 5, min_value=1)
 WHISPER_SIZE = os.getenv("WHISPER_SIZE", "tiny")
 ENABLE_PROSODY = _env_flag("ENABLE_PROSODY", False)
 INFERENCE_BATCH_SIZE = _env_int("INFERENCE_BATCH_SIZE", 24 if DEVICE == "cuda" else 8, min_value=1)
-FFMPEG_BIN = "ffmpeg"
+def resolve_ffmpeg_bin() -> str:
+    custom = os.getenv("FFMPEG_BIN", "").strip()
+    if custom:
+        return custom
+    if imageio_ffmpeg is not None:
+        try:
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            pass
+    return "ffmpeg"
+
+
+FFMPEG_BIN = resolve_ffmpeg_bin()
 
 # Feature normalization placeholders (ajusta con stats reales)
 FEATURE_MEANS = np.array([130.0, 0.25, 0.0, 0.0, 0.02, 0.005], dtype=np.float32)

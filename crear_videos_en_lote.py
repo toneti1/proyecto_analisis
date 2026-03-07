@@ -1,4 +1,4 @@
-﻿import os
+import os
 import cv2
 import whisper
 import torch
@@ -23,6 +23,10 @@ try:
 except Exception:
     genai = None
 
+try:
+    import imageio_ffmpeg
+except Exception:
+    imageio_ffmpeg = None
 
 # -----------------------------------------------------------------------------
 # Config
@@ -63,6 +67,20 @@ if OUTPUT_LAYOUT not in {"clip_only", "stacked"}:
     print(f"OUTPUT_LAYOUT invalido: {OUTPUT_LAYOUT}. Se usara clip_only.")
     OUTPUT_LAYOUT = "clip_only"
 
+
+def resolve_ffmpeg_bin() -> str:
+    custom = os.getenv("FFMPEG_BIN", "").strip()
+    if custom:
+        return custom
+    if imageio_ffmpeg is not None:
+        try:
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            pass
+    return "ffmpeg"
+
+
+FFMPEG_BIN = resolve_ffmpeg_bin()
 ANCHO_SALIDA = 1080
 ALTO_SALIDA = 1920
 TAMANO_FUENTE_DRAWTEXT = 70
@@ -303,7 +321,7 @@ Transcription:
 def crear_top_video_centrado(ruta_clip: Path, ruta_top_video_temp: Path):
     filtro = f"scale={ANCHO_SALIDA}:{ALTO_SALIDA // 2}:force_original_aspect_ratio=increase,crop={ANCHO_SALIDA}:{ALTO_SALIDA // 2}"
     cmd = [
-        "ffmpeg",
+        FFMPEG_BIN,
         "-y",
         "-i",
         str(ruta_clip),
@@ -331,7 +349,7 @@ def crear_top_video_tracking(ruta_clip: Path, ruta_top_video_temp: Path, w: int,
     ancho_recorte = h * (ANCHO_SALIDA / (ALTO_SALIDA / 2))
 
     command_top = [
-        "ffmpeg",
+        FFMPEG_BIN,
         "-y",
         "-f",
         "rawvideo",
@@ -392,7 +410,7 @@ def mezclar_musica_en_video(video_path: Path, musica_path: Path, vol_db: float =
         salida_temp = video_path.with_name(video_path.stem + "_mixtemp.mp4")
         vol_str = f"+{vol_db}dB" if vol_db >= 0 else f"{vol_db}dB"
         cmd = [
-            "ffmpeg",
+            FFMPEG_BIN,
             "-y",
             "-i",
             video_path.as_posix(),
@@ -497,7 +515,7 @@ def render_stacked_layout(
     fps = float(Fraction(clip_info.get("r_frame_rate", "30/1")))
 
     if FACE_TRACKING_ACTIVE:
-            crear_top_video_tracking(ruta_clip, ruta_top_video_temp, w, h, fps)
+        crear_top_video_tracking(ruta_clip, ruta_top_video_temp, w, h, fps)
     else:
         crear_top_video_centrado(ruta_clip, ruta_top_video_temp)
 
@@ -627,6 +645,3 @@ if __name__ == "__main__":
     if os.name != "posix":
         set_start_method("spawn", force=True)
     main()
-
-
-
