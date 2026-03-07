@@ -1,22 +1,16 @@
 # Streamlit Cloud (Linux/CPU) requirements
---extra-index-url https://download.pytorch.org/whl/cpu
-
-streamlit==1.54.0
+streamlit==1.55.0
 numpy==1.26.4
 
-# Core pipeline (CPU-friendly)
-torch==2.3.1+cpu
+# Core pipeline
+torch==2.3.1
 openai-whisper==20231117
 opencv-python-headless==4.10.0.84
 ffmpeg-python==0.2.0
-onnxruntime==1.18.1
 
 # NLP/scoring
 transformers==4.41.2
 safetensors==0.4.3
-
-# Optional audio features
-librosa==0.10.2.post1
 
 # APIs / utilities
 google-generativeai==0.8.5

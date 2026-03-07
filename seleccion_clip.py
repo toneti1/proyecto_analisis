@@ -1,11 +1,11 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 seleccion_clip.py
-VersiÃ³n mejorada y compatible con automatizador.py:
- - mantiene mejoras (segmentaciÃ³n dinÃ¡mica, prosodia, normalizaciÃ³n, ffmpeg extract, batching, dedupe)
+VersiÃƒÂ³n mejorada y compatible con automatizador.py:
+ - mantiene mejoras (segmentaciÃƒÂ³n dinÃƒÂ¡mica, prosodia, normalizaciÃƒÂ³n, ffmpeg extract, batching, dedupe)
  - CLIPS_OUTPUT_FOLDER apunta a ./clips para que el orquestador encuentre los archivos
- - sale con cÃ³digo != 0 en errores crÃ­ticos para que el orquestador detecte fallos
+ - sale con cÃƒÂ³digo != 0 en errores crÃƒÂ­ticos para que el orquestador detecte fallos
 """
 
 import os
@@ -58,11 +58,11 @@ def _env_int(name: str, default: int, min_value: int = 1) -> int:
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 TOP_N_CLIPS = _env_int("TOP_N_CLIPS", 12, min_value=1)
-BASE_FOLDER = r"C:\Users\gruiz\OneDrive\Desktop\clip_generator"
-MODEL_PATH = os.path.join(BASE_FOLDER, "viral_clip_detector")
-OUTPUT_FOLDER = os.path.join(BASE_FOLDER, "proyecto_analisis")
-# <-- Cambio mínimo para compatibilidad: la carpeta de salida de clips es ./clips
-CLIPS_OUTPUT_FOLDER = os.path.join(os.getcwd(), "clips")   # compatible con automatizador.py (CLIPS_FOLDER = "clips")
+BASE_FOLDER = Path(__file__).resolve().parent
+MODEL_PATH = str(BASE_FOLDER / "viral_clip_detector")
+OUTPUT_FOLDER = str(BASE_FOLDER)
+ # Carpeta de salida compatible con automatizador.py (CLIPS_FOLDER = "clips")
+CLIPS_OUTPUT_FOLDER = str(BASE_FOLDER / "clips")
 CLIP_MIN_S = 5
 CLIP_MAX_S = _env_int("CLIP_MAX_S", 60, min_value=5)
 SLIDING_STEP_S = _env_int("SLIDING_STEP_S", 5, min_value=1)
@@ -108,38 +108,38 @@ def download_youtube_video_with_yt_dlp(url: str, output_folder: str, filename: s
         ]
         subprocess.run(command, check=True)
         if os.path.exists(output_path):
-            print("[âœ“] Descarga completada.")
+            print("[Ã¢Å“â€œ] Descarga completada.")
             return output_path
         else:
             raise FileNotFoundError("yt-dlp no produjo el archivo esperado.")
     except FileNotFoundError:
-        print("ERROR: 'yt-dlp' no encontrado. InstÃ¡lalo: pip install yt-dlp")
+        print("ERROR: 'yt-dlp' no encontrado. InstÃƒÂ¡lalo: pip install yt-dlp")
         sys.exit(1)
     except subprocess.CalledProcessError as e:
-        print("ERROR: yt-dlp fallÃ³:", e)
+        print("ERROR: yt-dlp fallÃƒÂ³:", e)
         sys.exit(1)
 
 # -----------------------------
-# 3) TranscripciÃ³n con Whisper
+# 3) TranscripciÃƒÂ³n con Whisper
 # -----------------------------
 def transcribe_audio_with_timestamps(video_path: str):
     if whisper is None:
-        print("ERROR: Whisper no estÃ¡ instalado. Instala: pip install -U openai-whisper")
+        print("ERROR: Whisper no estÃƒÂ¡ instalado. Instala: pip install -U openai-whisper")
         sys.exit(1)
     print("[+] Cargando modelo Whisper:", WHISPER_SIZE)
     model = whisper.load_model(WHISPER_SIZE, device=DEVICE)
     print("[+] Transcribiendo... esto puede tardar.")
     res = model.transcribe(video_path, word_timestamps=True)
     segments = res.get('segments', [])
-    print(f"[âœ“] TranscripciÃ³n completada. {len(segments)} segmentos.")
+    print(f"[Ã¢Å“â€œ] TranscripciÃƒÂ³n completada. {len(segments)} segmentos.")
     return segments
 
 # -----------------------------
-# 4) SegmentaciÃ³n dinÃ¡mica por energÃ­a (librosa)
+# 4) SegmentaciÃƒÂ³n dinÃƒÂ¡mica por energÃƒÂ­a (librosa)
 # -----------------------------
 def compute_energy_segments(audio_path: str, hop_length=512, energy_thresh_ratio=0.3, min_s=CLIP_MIN_S, max_s=CLIP_MAX_S):
     if librosa is None:
-        print("[!] librosa no disponible: no se podrÃ¡n generar segmentos dinÃ¡micos.")
+        print("[!] librosa no disponible: no se podrÃƒÂ¡n generar segmentos dinÃƒÂ¡micos.")
         return []
 
     y, sr = librosa.load(audio_path, sr=16000)
@@ -176,7 +176,7 @@ def compute_energy_segments(audio_path: str, hop_length=512, energy_thresh_ratio
                 cur += max_s
             segments.append((cur, seg_end))
 
-    print(f"[+] SegmentaciÃ³n dinÃ¡mica generÃ³ {len(segments)} segmentos.")
+    print(f"[+] SegmentaciÃƒÂ³n dinÃƒÂ¡mica generÃƒÂ³ {len(segments)} segmentos.")
     return segments
 
 # -----------------------------
@@ -204,7 +204,7 @@ def extract_prosody_from_audio_segment(
         return {'pitch_mean': 0.0, 'pitch_std': 0.0, 'intensity': 0.0}
 
 # -----------------------------
-# 6) Prepare features y tokenizaciÃ³n
+# 6) Prepare features y tokenizaciÃƒÂ³n
 # -----------------------------
 def punctuation_restore_simple(text: str) -> str:
     qwords = ("who", "what", "when", "where", "why", "how", "is", "are", "do", "does", "did", "could", "would", "should")
@@ -242,7 +242,7 @@ def prepare_single_clip_for_inference(clip_data: dict, tokenizer: BertTokenizer)
     }
 
 # -----------------------------
-# 7) Dedupe semÃ¡ntica simple (cosine greedy)
+# 7) Dedupe semÃƒÂ¡ntica simple (cosine greedy)
 # -----------------------------
 def dedupe_by_embeddings(clips: List[dict], embeddings: List[np.ndarray], threshold: float = 0.85) -> List[dict]:
     picked = []
@@ -262,7 +262,7 @@ def dedupe_by_embeddings(clips: List[dict], embeddings: List[np.ndarray], thresh
     return picked
 
 # -----------------------------
-# 8) ffmpeg extraction rÃ¡pido
+# 8) ffmpeg extraction rÃƒÂ¡pido
 # -----------------------------
 def ffmpeg_extract(input_path: str, output_path: str, start: float, end: float, recode=False):
     cmd = [FFMPEG_BIN, '-y', '-ss', str(start), '-to', str(end), '-i', input_path]
@@ -298,7 +298,7 @@ def load_model_and_tokenizer(model_path: str):
             print("[!] Error cargando pesos:", e)
             print("[!] Continuando con pesos aleatorios (usa esto solo para pruebas).")
     else:
-        print("[!] No se encontrÃ³ model.safetensors en", model_path, "; usando pesos por defecto.")
+        print("[!] No se encontrÃƒÂ³ model.safetensors en", model_path, "; usando pesos por defecto.")
 
     model.to(DEVICE)
     model.eval()
@@ -346,7 +346,7 @@ def main(YOUTUBE_URL: str):
 
     segments = transcribe_audio_with_timestamps(video_path)
     if not segments:
-        print("ERROR: No se pudieron obtener segmentos de transcripciÃ³n.")
+        print("ERROR: No se pudieron obtener segmentos de transcripciÃƒÂ³n.")
         sys.exit(1)
 
     tmp_wav = os.path.join(tempfile.gettempdir(), f"audio_{ts}.wav")
@@ -364,7 +364,7 @@ def main(YOUTUBE_URL: str):
     else:
         duration = segments[-1]['end'] if segments else 0
         if duration <= 0:
-            print("ERROR: duraciÃ³n del audio desconocida.")
+            print("ERROR: duraciÃƒÂ³n del audio desconocida.")
             sys.exit(1)
         cur = 0.0
         while cur < duration:
@@ -476,11 +476,11 @@ def main(YOUTUBE_URL: str):
         print(f"[>] Exportando clip {idx+1}: {start:.1f}s - {end:.1f}s  (score={score:.3f}) -> {out_path}")
         try:
             ffmpeg_extract(video_path, out_path, start, end, recode=False)
-            print("[âœ“] Exportado:", out_path)
+            print("[Ã¢Å“â€œ] Exportado:", out_path)
         except Exception as e:
             print("[!] Error exportando con -c copy, intentando recodificar:", e)
             ffmpeg_extract(video_path, out_path, start, end, recode=True)
-            print("[âœ“] Exportado (recode):", out_path)
+            print("[Ã¢Å“â€œ] Exportado (recode):", out_path)
 
     try:
         os.remove(video_path)
@@ -506,6 +506,7 @@ if __name__ == "__main__":
     else:
         print("Uso: python seleccion_clip.py \"URL_DE_YOUTUBE\"")
         sys.exit(1)
+
 
 
 
