@@ -1,4 +1,4 @@
-﻿# automatizador.py
+# automatizador.py
 
 import os
 import glob
@@ -217,13 +217,21 @@ def main_orchestrator():
 def process_url(url: str, clip_count: int = 12):
     if not url or not url.strip():
         raise ValueError("URL vacia o invalida.")
+    return process_source(url.strip(), clip_count=clip_count)
 
-    url = url.strip()
+
+def process_video_file(video_path: str, clip_count: int = 12):
+    if not video_path or not os.path.exists(video_path):
+        raise ValueError(f"Archivo de video no valido: {video_path}")
+    return process_source(video_path, clip_count=clip_count)
+
+
+def process_source(source: str, clip_count: int = 12):
     env_overrides = build_env_overrides(clip_count=clip_count)
     clean_clips_folder()
 
-    # Para Streamlit: siempre procesa la URL recibida.
-    if not run_script(CLIP_SELECTOR_SCRIPT, url, env_overrides=env_overrides):
+    # source puede ser URL o ruta local a video.
+    if not run_script(CLIP_SELECTOR_SCRIPT, source, env_overrides=env_overrides):
         return {"clips_raw": [], "clips_edited": []}
 
     clips_raw = sorted(glob.glob(os.path.join(CLIPS_FOLDER, "*.mp4")))
