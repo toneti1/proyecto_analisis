@@ -3,7 +3,10 @@ import cv2
 import whisper
 import torch
 import numpy as np
-from insightface.app import FaceAnalysis
+try:
+    from insightface.app import FaceAnalysis
+except Exception:
+    FaceAnalysis = None
 import ffmpeg
 from pathlib import Path
 from multiprocessing import set_start_method
@@ -137,6 +140,9 @@ else:
 MODELO_WHISPER = None
 FACE_APP = None
 MODELO_GEMINI = None
+FACE_TRACKING_ACTIVE = ENABLE_FACE_TRACKING and FaceAnalysis is not None
+if ENABLE_FACE_TRACKING and FaceAnalysis is None:
+    print("InsightFace no disponible; desactivando face tracking.")
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "").strip()
 if USE_GEMINI_METADATA and genai is not None and GOOGLE_API_KEY:
@@ -155,7 +161,7 @@ try:
 
     MODELO_WHISPER = whisper.load_model(WHISPER_MODEL_SIZE, device=DEVICE)
 
-    if ENABLE_FACE_TRACKING:
+    if FACE_TRACKING_ACTIVE:
         FACE_APP = FaceAnalysis(name="buffalo_l", providers=providers)
         FACE_APP.prepare(ctx_id=0 if DEVICE == "cuda" else -1, det_size=(640, 640))
 except Exception as e:
@@ -490,8 +496,8 @@ def render_stacked_layout(
     w, h = clip_info["width"], clip_info["height"]
     fps = float(Fraction(clip_info.get("r_frame_rate", "30/1")))
 
-    if ENABLE_FACE_TRACKING:
-        crear_top_video_tracking(ruta_clip, ruta_top_video_temp, w, h, fps)
+    if FACE_TRACKING_ACTIVE:
+            crear_top_video_tracking(ruta_clip, ruta_top_video_temp, w, h, fps)
     else:
         crear_top_video_centrado(ruta_clip, ruta_top_video_temp)
 
@@ -621,3 +627,6 @@ if __name__ == "__main__":
     if os.name != "posix":
         set_start_method("spawn", force=True)
     main()
+
+
+

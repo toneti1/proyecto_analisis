@@ -1,23 +1,22 @@
-﻿# Deploy requirements for Streamlit Cloud (Linux, CPU)
-streamlit==1.54.0
-numpy==2.2.6
+﻿# Streamlit Cloud (Linux/CPU) requirements
+--extra-index-url https://download.pytorch.org/whl/cpu
 
-# Video/ML pipeline
-torch==2.7.1
-torchaudio==2.7.1
-openai-whisper==20250625
-opencv-python-headless==4.12.0.88
+streamlit==1.54.0
+numpy==1.26.4
+
+# Core pipeline (CPU-friendly)
+torch==2.3.1+cpu
+openai-whisper==20231117
+opencv-python-headless==4.10.0.84
 ffmpeg-python==0.2.0
-insightface==0.7.3
-onnxruntime==1.22.1
+onnxruntime==1.18.1
 
 # NLP/scoring
-transformers==4.53.2
-safetensors==0.5.3
+transformers==4.41.2
+safetensors==0.4.3
 
-# Audio features
-librosa==0.11.0
-praat-parselmouth==0.4.6
+# Optional audio features
+librosa==0.10.2.post1
 
 # APIs / utilities
 google-generativeai==0.8.5
