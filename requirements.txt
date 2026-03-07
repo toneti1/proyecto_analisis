@@ -1,4 +1,4 @@
-﻿# Streamlit Cloud (Linux/CPU) requirements
+# Streamlit Cloud (Linux/CPU) requirements
 --extra-index-url https://download.pytorch.org/whl/cpu
 
 streamlit==1.54.0
