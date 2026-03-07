@@ -150,20 +150,30 @@ def download_youtube_video_with_yt_dlp(url: str, output_folder: str, filename: s
         print("[!] No se encontro runtime JS (deno). yt-dlp puede fallar en algunos videos de YouTube.")
 
     print(f"[+] Descargando video: {normalized_url} -> {output_path}")
+    cookie_args = []
+    cookies_file = os.getenv("YTDLP_COOKIES_FILE", "").strip()
+    if cookies_file and os.path.exists(cookies_file):
+        cookie_args = ["--cookies", cookies_file]
+
     base_args = [
         "yt-dlp",
         "--no-playlist",
         "--no-cache-dir",
+        "--socket-timeout",
+        "10",
         "--retries",
-        "3",
+        "1",
         "--fragment-retries",
-        "3",
-    ] + js_runtime_args
+        "0",
+        "--abort-on-unavailable-fragments",
+    ] + cookie_args + js_runtime_args
 
     commands = [
         base_args + [
             "--extractor-args",
             "youtube:player_client=tv,ios,web_safari,web",
+            "-f",
+            "bestvideo[protocol^=https]+bestaudio[protocol^=https]/best[protocol^=https]/b[protocol^=https]",
             "--merge-output-format",
             "mp4",
             normalized_url,
@@ -174,7 +184,7 @@ def download_youtube_video_with_yt_dlp(url: str, output_folder: str, filename: s
             "--extractor-args",
             "youtube:player_client=tv,ios,web_safari,web",
             "-f",
-            "bestvideo*+bestaudio/best",
+            "bv*[ext=mp4][protocol^=https]+ba[ext=m4a][protocol^=https]/b[ext=mp4][protocol^=https]/b[protocol^=https]",
             "--merge-output-format",
             "mp4",
             normalized_url,
@@ -183,9 +193,9 @@ def download_youtube_video_with_yt_dlp(url: str, output_folder: str, filename: s
         ],
         base_args + [
             "--extractor-args",
-            "youtube:player_client=tv,ios,web_safari",
+            "youtube:player_client=tv,web_safari,web",
             "-f",
-            "b",
+            "b[protocol^=https]",
             normalized_url,
             "-o",
             output_path,
