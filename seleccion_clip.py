@@ -12,6 +12,7 @@ import os
 import sys
 import time
 import math
+import re
 import subprocess
 import tempfile
 from bisect import bisect_left
@@ -116,23 +117,55 @@ class ViralClipModel(nn.Module):
 def download_youtube_video_with_yt_dlp(url: str, output_folder: str, filename: str) -> str:
     os.makedirs(output_folder, exist_ok=True)
     output_path = os.path.join(output_folder, filename)
-    print(f"[+] Descargando video: {url} -> {output_path}")
+
+    # Normaliza URLs malformadas como "...watch?v=ID&t" a URL canonica.
+    video_id_match = re.search(r"(?<=v=)[a-zA-Z0-9_-]+|(?<=be/)[a-zA-Z0-9_-]+", url)
+    normalized_url = f"https://www.youtube.com/watch?v={video_id_match.group(0)}" if video_id_match else url
+
+    print(f"[+] Descargando video: {normalized_url} -> {output_path}")
+    base_args = ["yt-dlp", "--no-playlist", "--no-cache-dir", "--retries", "3", "--fragment-retries", "3"]
+
+    commands = [
+        base_args + [
+            "--extractor-args", "youtube:player_client=android,web",
+            "-f", "bestvideo*+bestaudio/best",
+            "--merge-output-format", "mp4",
+            normalized_url, "-o", output_path,
+        ],
+        base_args + [
+            "--extractor-args", "youtube:player_client=android,web",
+            "-f", "best[ext=mp4]/best",
+            normalized_url, "-o", output_path,
+        ],
+        base_args + [
+            "-f", "best",
+            normalized_url, "-o", output_path,
+        ],
+    ]
+
     try:
-        command = [
-            'yt-dlp', '-f', 'bestvideo+bestaudio/best',
-            '--merge-output-format', 'mp4', url, '-o', output_path
-        ]
-        subprocess.run(command, check=True)
+        last_error = None
+        for idx, command in enumerate(commands, start=1):
+            print(f"[+] Intento yt-dlp {idx}/{len(commands)}")
+            try:
+                subprocess.run(command, check=True)
+                if os.path.exists(output_path):
+                    print("[OK] Descarga completada.")
+                    return output_path
+            except subprocess.CalledProcessError as e:
+                last_error = e
+                continue
+
         if os.path.exists(output_path):
-            print("[Ã¢Å“â€œ] Descarga completada.")
+            print("[OK] Descarga completada.")
             return output_path
-        else:
-            raise FileNotFoundError("yt-dlp no produjo el archivo esperado.")
+
+        raise RuntimeError(f"yt-dlp no pudo descargar el video. Ultimo error: {last_error}")
     except FileNotFoundError:
-        print("ERROR: 'yt-dlp' no encontrado. InstÃƒÂ¡lalo: pip install yt-dlp")
+        print("ERROR: 'yt-dlp' no encontrado. Instalala: pip install yt-dlp")
         sys.exit(1)
-    except subprocess.CalledProcessError as e:
-        print("ERROR: yt-dlp fallÃƒÂ³:", e)
+    except Exception as e:
+        print("ERROR: yt-dlp fallo:", e)
         sys.exit(1)
 
 # -----------------------------
