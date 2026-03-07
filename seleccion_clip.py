@@ -13,6 +13,7 @@ import sys
 import time
 import math
 import re
+import shutil
 import subprocess
 import tempfile
 from bisect import bisect_left
@@ -88,6 +89,26 @@ def resolve_ffmpeg_bin() -> str:
 
 FFMPEG_BIN = resolve_ffmpeg_bin()
 
+
+def resolve_js_runtime_args() -> List[str]:
+    runtime_override = os.getenv("YTDLP_JS_RUNTIME", "").strip()
+    if runtime_override:
+        return ["--js-runtimes", runtime_override]
+
+    candidates = []
+    deno_from_path = shutil.which("deno")
+    if deno_from_path:
+        candidates.append(deno_from_path)
+
+    py_bin_dir = Path(sys.executable).resolve().parent
+    candidates.extend([str(py_bin_dir / "deno"), str(py_bin_dir / "deno.exe")])
+
+    for cand in candidates:
+        if cand and os.path.exists(cand):
+            return ["--js-runtimes", f"deno:{cand}"]
+
+    return []
+
 # Feature normalization placeholders (ajusta con stats reales)
 FEATURE_MEANS = np.array([130.0, 0.25, 0.0, 0.0, 0.02, 0.005], dtype=np.float32)
 FEATURE_STDS  = np.array([40.0, 0.20, 0.02, 0.02, 0.03, 0.01], dtype=np.float32)
@@ -122,24 +143,52 @@ def download_youtube_video_with_yt_dlp(url: str, output_folder: str, filename: s
     video_id_match = re.search(r"(?<=v=)[a-zA-Z0-9_-]+|(?<=be/)[a-zA-Z0-9_-]+", url)
     normalized_url = f"https://www.youtube.com/watch?v={video_id_match.group(0)}" if video_id_match else url
 
+    js_runtime_args = resolve_js_runtime_args()
+    if js_runtime_args:
+        print(f"[+] Usando runtime JS para yt-dlp: {js_runtime_args[1]}")
+    else:
+        print("[!] No se encontro runtime JS (deno). yt-dlp puede fallar en algunos videos de YouTube.")
+
     print(f"[+] Descargando video: {normalized_url} -> {output_path}")
-    base_args = ["yt-dlp", "--no-playlist", "--no-cache-dir", "--retries", "3", "--fragment-retries", "3"]
+    base_args = [
+        "yt-dlp",
+        "--no-playlist",
+        "--no-cache-dir",
+        "--retries",
+        "3",
+        "--fragment-retries",
+        "3",
+    ] + js_runtime_args
 
     commands = [
         base_args + [
-            "--extractor-args", "youtube:player_client=android,web",
-            "-f", "bestvideo*+bestaudio/best",
-            "--merge-output-format", "mp4",
-            normalized_url, "-o", output_path,
+            "--extractor-args",
+            "youtube:player_client=tv,ios,web_safari,web",
+            "--merge-output-format",
+            "mp4",
+            normalized_url,
+            "-o",
+            output_path,
         ],
         base_args + [
-            "--extractor-args", "youtube:player_client=android,web",
-            "-f", "best[ext=mp4]/best",
-            normalized_url, "-o", output_path,
+            "--extractor-args",
+            "youtube:player_client=tv,ios,web_safari,web",
+            "-f",
+            "bestvideo*+bestaudio/best",
+            "--merge-output-format",
+            "mp4",
+            normalized_url,
+            "-o",
+            output_path,
         ],
         base_args + [
-            "-f", "best",
-            normalized_url, "-o", output_path,
+            "--extractor-args",
+            "youtube:player_client=tv,ios,web_safari",
+            "-f",
+            "b",
+            normalized_url,
+            "-o",
+            output_path,
         ],
     ]
 
