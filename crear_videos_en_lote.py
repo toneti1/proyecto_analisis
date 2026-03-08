@@ -17,6 +17,8 @@ import random
 import re
 import json
 from fractions import Fraction
+import shutil
+import tempfile
 
 try:
     import google.generativeai as genai
@@ -81,6 +83,47 @@ def resolve_ffmpeg_bin() -> str:
 
 
 FFMPEG_BIN = resolve_ffmpeg_bin()
+
+
+def ensure_ffmpeg_in_path(ffmpeg_bin: str) -> None:
+    ffmpeg_path = Path(ffmpeg_bin)
+    if not ffmpeg_path.exists():
+        return
+
+    current_path = os.environ.get("PATH", "")
+    path_items = current_path.split(os.pathsep) if current_path else []
+
+    def prepend(entry: str) -> None:
+        if entry and entry not in path_items:
+            path_items.insert(0, entry)
+
+    prepend(str(ffmpeg_path.parent))
+
+    expected_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    if ffmpeg_path.name != expected_name:
+        shim_dir = Path(tempfile.gettempdir()) / "ffmpeg_shim"
+        shim_dir.mkdir(parents=True, exist_ok=True)
+        shim_path = shim_dir / expected_name
+
+        if not shim_path.exists():
+            try:
+                if os.name == "nt":
+                    shutil.copy2(ffmpeg_path, shim_path)
+                else:
+                    os.symlink(ffmpeg_path, shim_path)
+            except Exception:
+                try:
+                    shutil.copy2(ffmpeg_path, shim_path)
+                except Exception:
+                    pass
+
+        prepend(str(shim_dir))
+
+    os.environ["PATH"] = os.pathsep.join(path_items)
+
+
+ensure_ffmpeg_in_path(FFMPEG_BIN)
+
 ANCHO_SALIDA = 1080
 ALTO_SALIDA = 1920
 TAMANO_FUENTE_DRAWTEXT = 70
