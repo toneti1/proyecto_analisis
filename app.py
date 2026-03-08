@@ -62,20 +62,6 @@ def save_uploaded_video(uploaded_file) -> str:
     return str(destination)
 
 
-def save_uploaded_cookies(uploaded_file) -> str:
-    cookies_dir = Path("user_data") / "cookies"
-    cookies_dir.mkdir(parents=True, exist_ok=True)
-
-    original_name = uploaded_file.name or "cookies.txt"
-    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", original_name)
-    destination = cookies_dir / f"{int(time.time())}_{safe_name}"
-
-    with open(destination, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-
-    return str(destination)
-
-
 st.set_page_config(page_title="Clip Generator", layout="wide")
 st.title("Clip Generator")
 
@@ -92,16 +78,9 @@ source_mode = st.radio(
 
 url = ""
 uploaded_video = None
-uploaded_cookies = None
 if source_mode == "YouTube URL":
     url = st.text_input("YouTube video URL", placeholder="https://www.youtube.com/watch?v=...")
-    uploaded_cookies = st.file_uploader(
-        "Optional cookies file (Netscape format)",
-        type=["txt"],
-        accept_multiple_files=False,
-        help="Recommended in cloud if URL downloads fail with HTTP 403.",
-    )
-    st.caption("If URL still fails with HTTP 403, upload the source video file instead.")
+    st.caption("If YouTube blocks cloud downloads (HTTP 403), use upload mode.")
 else:
     uploaded_video = st.file_uploader(
         "Upload a video file",
@@ -119,19 +98,12 @@ if run_btn:
         st.error("Please upload a video file.")
     else:
         local_upload_path = None
-        local_cookies_path = None
         try:
             with st.spinner("Running pipeline. This can take a few minutes..."):
                 from automatizador import process_url, process_video_file
 
                 if source_mode == "YouTube URL":
-                    if uploaded_cookies is not None:
-                        local_cookies_path = save_uploaded_cookies(uploaded_cookies)
-                    result = process_url(
-                        url.strip(),
-                        clip_count=int(clip_count),
-                        cookies_file=local_cookies_path,
-                    )
+                    result = process_url(url.strip(), clip_count=int(clip_count))
                 else:
                     local_upload_path = save_uploaded_video(uploaded_video)
                     result = process_video_file(local_upload_path, clip_count=int(clip_count))
@@ -142,7 +114,7 @@ if run_btn:
             if not clips_raw and not clips_edited:
                 st.error("The pipeline finished without generating clips. Check terminal logs.")
                 if source_mode == "YouTube URL":
-                    st.info("Tip: upload cookies.txt or switch to 'Upload video file'.")
+                    st.info("Tip: if logs show YouTube HTTP 403, switch to 'Upload video file'.")
             else:
                 if clips_edited:
                     st.success(f"Generated {len(clips_edited)} edited clips.")
@@ -186,7 +158,7 @@ if run_btn:
         except Exception as e:
             st.error(f"Pipeline error: {e}")
             if source_mode == "YouTube URL":
-                st.info("If logs include YouTube HTTP 403, upload cookies.txt or use file upload mode.")
+                st.info("If logs include YouTube HTTP 403, use 'Upload video file' for a reliable run.")
             import traceback
 
             traceback.print_exc()
@@ -194,10 +166,5 @@ if run_btn:
             if local_upload_path and os.path.exists(local_upload_path):
                 try:
                     os.remove(local_upload_path)
-                except Exception:
-                    pass
-            if local_cookies_path and os.path.exists(local_cookies_path):
-                try:
-                    os.remove(local_cookies_path)
                 except Exception:
                     pass

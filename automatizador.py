@@ -120,7 +120,7 @@ def infer_edited_paths_for_raw(clips_raw):
     return sorted(inferred)
 
 
-def build_env_overrides(clip_count=None, cookies_file=None):
+def build_env_overrides(clip_count=None):
     overrides = {
         "OUTPUT_LAYOUT": "clip_only",
         "ADD_BACKGROUND_MUSIC": "0",
@@ -130,9 +130,6 @@ def build_env_overrides(clip_count=None, cookies_file=None):
         clip_count = max(1, int(clip_count))
         overrides["TOP_N_CLIPS"] = str(clip_count)
         overrides["MAX_CLIPS_TO_EDIT"] = str(clip_count)
-
-    if cookies_file and os.path.exists(cookies_file):
-        overrides["YTDLP_COOKIES_FILE"] = os.path.abspath(cookies_file)
 
     return overrides
 
@@ -217,10 +214,10 @@ def main_orchestrator():
     print(f"Videos nuevos procesados: {new_videos_processed_count}")
 
 
-def process_url(url: str, clip_count: int = 12, cookies_file: str = None):
+def process_url(url: str, clip_count: int = 12):
     if not url or not url.strip():
         raise ValueError("URL vacia o invalida.")
-    return process_source(url.strip(), clip_count=clip_count, cookies_file=cookies_file)
+    return process_source(url.strip(), clip_count=clip_count)
 
 
 def process_video_file(video_path: str, clip_count: int = 12):
@@ -229,8 +226,8 @@ def process_video_file(video_path: str, clip_count: int = 12):
     return process_source(video_path, clip_count=clip_count)
 
 
-def process_source(source: str, clip_count: int = 12, cookies_file: str = None):
-    env_overrides = build_env_overrides(clip_count=clip_count, cookies_file=cookies_file)
+def process_source(source: str, clip_count: int = 12):
+    env_overrides = build_env_overrides(clip_count=clip_count)
     clean_clips_folder()
 
     # source puede ser URL o ruta local a video.
