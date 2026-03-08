@@ -23,6 +23,83 @@ def build_zip_buffer(file_paths):
     return buf
 
 
+def build_local_downloader_zip() -> BytesIO:
+    downloader_py = '''#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+
+
+def main() -> int:
+    url = input("Paste the YouTube URL and press Enter: ").strip()
+    if not url:
+        print("No URL provided.")
+        return 1
+
+    print("Installing/updating yt-dlp...")
+    subprocess.run([sys.executable, "-m", "pip", "install", "-U", "yt-dlp"], check=True)
+
+    output_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+    os.makedirs(output_dir, exist_ok=True)
+    output_template = os.path.join(output_dir, "podcast_%(title).80s.%(ext)s")
+
+    print("Downloading video...")
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "yt_dlp",
+            "-f",
+            "best",
+            "--no-playlist",
+            url,
+            "-o",
+            output_template,
+        ],
+        check=True,
+    )
+
+    print("Done. Check your Downloads folder.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+    launcher_bat = '''@echo off
+setlocal
+cd /d %~dp0
+py -3 download_podcast.py
+if errorlevel 1 (
+  echo.
+  echo Download failed.
+  pause
+  exit /b 1
+)
+echo.
+echo Download completed.
+pause
+'''
+
+    readme_txt = '''Local Downloader (Windows)
+
+1) Extract this ZIP.
+2) Double-click run_downloader.bat.
+3) Paste the YouTube URL.
+4) Wait for completion.
+5) Upload the downloaded video file in the web app.
+'''
+
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("download_podcast.py", downloader_py)
+        zf.writestr("run_downloader.bat", launcher_bat)
+        zf.writestr("README.txt", readme_txt)
+    buf.seek(0)
+    return buf
+
+
 def render_download_list(file_paths, key_prefix: str):
     for idx, path in enumerate(file_paths):
         if not os.path.exists(path):
@@ -65,56 +142,46 @@ def save_uploaded_video(uploaded_file) -> str:
 st.set_page_config(page_title="Clip Generator", layout="wide")
 st.title("Clip Generator")
 
-st.markdown(
-    "Choose an input source, select how many clips you want, and run the pipeline. "
-    "The output uses **clip + subtitles** by default."
+st.info(
+    "Streamlit Cloud cannot reliably download YouTube videos directly. "
+    "Shared cloud IPs are frequently blocked by YouTube (HTTP 403 / token checks). "
+    "Download the video locally with the tool below, then upload the file here."
 )
 
-source_mode = st.radio(
-    "Input source",
-    options=["YouTube URL", "Upload video file"],
-    horizontal=True,
+st.download_button(
+    "Download Local Podcast Downloader (Windows ZIP)",
+    data=build_local_downloader_zip(),
+    file_name="local_podcast_downloader.zip",
+    mime="application/zip",
+    use_container_width=True,
 )
 
-url = ""
-uploaded_video = None
-if source_mode == "YouTube URL":
-    url = st.text_input("YouTube video URL", placeholder="https://www.youtube.com/watch?v=...")
-    st.caption("If YouTube blocks cloud downloads (HTTP 403), use upload mode.")
-else:
-    uploaded_video = st.file_uploader(
-        "Upload a video file",
-        type=["mp4", "mov", "mkv", "webm", "avi"],
-        accept_multiple_files=False,
-    )
+uploaded_video = st.file_uploader(
+    "Upload video file",
+    type=["mp4", "mov", "mkv", "webm", "avi"],
+    accept_multiple_files=False,
+)
 
 clip_count = st.number_input("How many clips?", min_value=1, max_value=40, value=12, step=1)
 run_btn = st.button("Generate Clips", type="primary")
 
 if run_btn:
-    if source_mode == "YouTube URL" and (not url or not url.strip()):
-        st.error("Please enter a valid URL.")
-    elif source_mode == "Upload video file" and uploaded_video is None:
+    if uploaded_video is None:
         st.error("Please upload a video file.")
     else:
         local_upload_path = None
         try:
             with st.spinner("Running pipeline. This can take a few minutes..."):
-                from automatizador import process_url, process_video_file
+                from automatizador import process_video_file
 
-                if source_mode == "YouTube URL":
-                    result = process_url(url.strip(), clip_count=int(clip_count))
-                else:
-                    local_upload_path = save_uploaded_video(uploaded_video)
-                    result = process_video_file(local_upload_path, clip_count=int(clip_count))
+                local_upload_path = save_uploaded_video(uploaded_video)
+                result = process_video_file(local_upload_path, clip_count=int(clip_count))
 
             clips_raw = [p for p in result.get("clips_raw", []) if os.path.exists(p)]
             clips_edited = [p for p in result.get("clips_edited", []) if os.path.exists(p)]
 
             if not clips_raw and not clips_edited:
                 st.error("The pipeline finished without generating clips. Check terminal logs.")
-                if source_mode == "YouTube URL":
-                    st.info("Tip: if logs show YouTube HTTP 403, switch to 'Upload video file'.")
             else:
                 if clips_edited:
                     st.success(f"Generated {len(clips_edited)} edited clips.")
@@ -157,8 +224,6 @@ if run_btn:
 
         except Exception as e:
             st.error(f"Pipeline error: {e}")
-            if source_mode == "YouTube URL":
-                st.info("If logs include YouTube HTTP 403, use 'Upload video file' for a reliable run.")
             import traceback
 
             traceback.print_exc()
