@@ -38,3 +38,7 @@ Thumbs.db
 
 # Local backups
 backups/
+
+# Keep safetensors as split chunks (<100MB each) for GitHub
+viral_clip_detector/model.safetensors
+
