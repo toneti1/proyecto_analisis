@@ -1,4 +1,5 @@
-import os
+﻿import os
+import sys
 import cv2
 import whisper
 import torch
@@ -220,8 +221,6 @@ try:
     if not RUTA_FUENTE.exists():
         raise FileNotFoundError(f"No se encuentra la fuente en: {RUTA_FUENTE}")
 
-    MODELO_WHISPER = whisper.load_model(WHISPER_MODEL_SIZE, device=DEVICE)
-
     if FACE_TRACKING_ACTIVE:
         FACE_APP = FaceAnalysis(name="buffalo_l", providers=providers)
         FACE_APP.prepare(ctx_id=0 if DEVICE == "cuda" else -1, det_size=(640, 640))
@@ -229,7 +228,7 @@ except Exception as e:
     print(f"Error fatal al cargar modelos/fuente: {e}")
     raise
 
-print("Modelos cargados y listos.")
+print("Configuracion base cargada y lista.")
 
 
 # -----------------------------------------------------------------------------
@@ -266,14 +265,208 @@ def encontrar_rostro_principal_insightface(frame):
     return (x1, y1, x2 - x1, y2 - y1)
 
 
+def get_whisper_model():
+    global MODELO_WHISPER
+    if MODELO_WHISPER is None:
+        print(f"Cargando Whisper ({WHISPER_MODEL_SIZE})...")
+        MODELO_WHISPER = whisper.load_model(WHISPER_MODEL_SIZE, device=DEVICE)
+    return MODELO_WHISPER
+
+
+def cargar_segmentos_precalculados(ruta_video: Path) -> list:
+    sidecar_path = ruta_video.with_suffix(".json")
+    if not sidecar_path.exists():
+        return []
+
+    try:
+        with open(sidecar_path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        segmentos = data.get("segments", []) if isinstance(data, dict) else []
+        if isinstance(segmentos, list) and segmentos:
+            print(f"[{ruta_video.name}] Usando subtitulos precalculados ({sidecar_path.name}).")
+            return segmentos
+    except Exception as e:
+        print(f"[{ruta_video.name}] No se pudo leer sidecar de subtitulos: {e}")
+
+    return []
+
+
 def transcribir_audio(ruta_video: Path) -> list:
+    precalc = cargar_segmentos_precalculados(ruta_video)
+    if precalc:
+        return precalc
+
     print(f"[{ruta_video.name}] Transcribiendo audio...")
     try:
-        resultado = MODELO_WHISPER.transcribe(str(ruta_video), word_timestamps=True, fp16=FP16)
+        modelo = get_whisper_model()
+        resultado = modelo.transcribe(str(ruta_video), word_timestamps=True, fp16=FP16)
         return resultado.get("segments", [])
     except Exception as e:
         print(f"Error en transcripcion de {ruta_video.name}: {e}")
         return []
+
+
+def clip_has_audio(ruta_clip: Path) -> bool:
+    try:
+        probe = ffmpeg.probe(str(ruta_clip))
+        return any(s.get("codec_type") == "audio" for s in probe.get("streams", []))
+    except Exception:
+        return False
+
+
+def build_word_cues(segmentos) -> list:
+    palabras = [p for s in segmentos for p in s.get("words", [])]
+    cues = []
+    for i in range(0, len(palabras), PALABRAS_POR_SUBTITULO):
+        grupo = palabras[i:i + PALABRAS_POR_SUBTITULO]
+        if not grupo:
+            continue
+
+        start = grupo[0].get("start")
+        end = grupo[-1].get("end")
+        if start is None or end is None:
+            continue
+
+        texto = " ".join(p.get("word", "") for p in grupo).strip().upper()
+        texto = censurar_texto(texto)
+        if not texto:
+            continue
+        cues.append((float(start), float(end), texto))
+
+    if cues:
+        return cues
+
+    # Fallback when sidecar/Whisper has segment text but no per-word timestamps.
+    for seg in segmentos or []:
+        start = seg.get("start")
+        end = seg.get("end")
+        text = str(seg.get("text", "")).strip().upper()
+        text = censurar_texto(text)
+        if start is None or end is None or not text:
+            continue
+        cues.append((float(start), float(end), text))
+
+    return cues
+
+
+def fit_frame_to_canvas(frame, out_w: int, out_h: int):
+    h, w = frame.shape[:2]
+    if h <= 0 or w <= 0:
+        return np.zeros((out_h, out_w, 3), dtype=np.uint8)
+
+    scale = min(out_w / float(w), out_h / float(h))
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+    resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    canvas = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+    x = (out_w - new_w) // 2
+    y = (out_h - new_h) // 2
+    canvas[y:y + new_h, x:x + new_w] = resized
+    return canvas
+
+
+def draw_subtitle_cv2(frame, text: str):
+    if not text:
+        return frame
+
+    font = cv2.FONT_HERSHEY_DUPLEX
+    font_scale = 1.7
+    thickness = 3
+    border = 7
+    (text_w, _), _ = cv2.getTextSize(text, font, font_scale, thickness)
+    x = max(30, int((ANCHO_SALIDA - text_w) / 2))
+    y = ALTO_SALIDA - 140
+
+    cv2.putText(frame, text, (x, y), font, font_scale, (0, 0, 0), border, cv2.LINE_AA)
+    cv2.putText(frame, text, (x, y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+    return frame
+
+
+def render_clip_only_layout_cv2_fallback(ruta_clip: Path, ruta_salida_video: Path, segmentos, nombre_clip_log: str):
+    print(f"[{nombre_clip_log}] Activando fallback OpenCV para render.")
+    temp_video = ruta_salida_video.with_suffix(".noaudio.mp4")
+
+    cap = cv2.VideoCapture(str(ruta_clip))
+    if not cap.isOpened():
+        raise RuntimeError(f"No se pudo abrir clip para fallback: {ruta_clip}")
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if not fps or fps <= 0:
+        fps = 30.0
+
+    writer = cv2.VideoWriter(
+        str(temp_video),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (ANCHO_SALIDA, ALTO_SALIDA),
+    )
+    if not writer.isOpened():
+        cap.release()
+        raise RuntimeError("No se pudo iniciar VideoWriter fallback (mp4v).")
+
+    cues = build_word_cues(segmentos)
+    cue_idx = 0
+    frame_idx = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        t = frame_idx / fps
+        while cue_idx < len(cues) and t > cues[cue_idx][1]:
+            cue_idx += 1
+
+        frame_out = fit_frame_to_canvas(frame, ANCHO_SALIDA, ALTO_SALIDA)
+        if cue_idx < len(cues):
+            start, end, text = cues[cue_idx]
+            if start <= t <= end:
+                frame_out = draw_subtitle_cv2(frame_out, text)
+
+        writer.write(frame_out)
+        frame_idx += 1
+
+    cap.release()
+    writer.release()
+
+    if frame_idx == 0:
+        if temp_video.exists():
+            temp_video.unlink(missing_ok=True)
+        raise RuntimeError("Fallback OpenCV no produjo frames.")
+
+    if clip_has_audio(ruta_clip):
+        try:
+            subprocess.run(
+                [
+                    FFMPEG_BIN,
+                    "-y",
+                    "-i",
+                    str(temp_video),
+                    "-i",
+                    str(ruta_clip),
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "1:a:0?",
+                    "-c:v",
+                    "copy",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    str(ruta_salida_video),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            temp_video.unlink(missing_ok=True)
+            return
+        except Exception as e:
+            print(f"[{nombre_clip_log}] No se pudo mezclar audio en fallback: {e}")
+
+    os.replace(str(temp_video), str(ruta_salida_video))
 
 
 def obtener_posiciones_suavizadas_cara(ruta_video: Path, w: int, h: int) -> list:
@@ -491,22 +684,11 @@ def aplicar_subtitulos_drawtext(video_stream, segmentos, y_offset_px: int):
         return video_stream
 
     ruta_fuente_posix = Path(RUTA_FUENTE).resolve().as_posix()
-    palabras = [p for s in segmentos for p in s.get("words", [])]
+    cues = build_word_cues(segmentos)
     subs_y_value = str(ALTO_SALIDA - TAMANO_FUENTE_DRAWTEXT - y_offset_px)
 
-    for i in range(0, len(palabras), PALABRAS_POR_SUBTITULO):
-        grupo = palabras[i:i + PALABRAS_POR_SUBTITULO]
-        if not grupo:
-            continue
-
-        start = grupo[0].get("start")
-        end = grupo[-1].get("end")
-        if start is None or end is None:
-            continue
-
-        texto = " ".join(p.get("word", "") for p in grupo).strip().upper()
-        texto = censurar_texto(texto)
-        texto_esc = escape_text_for_drawtext(texto)
+    for start, end, text in cues:
+        texto_esc = escape_text_for_drawtext(text)
 
         video_stream = video_stream.drawtext(
             text=texto_esc,
@@ -535,13 +717,41 @@ def render_clip_only_layout(ruta_clip: Path, ruta_salida_video: Path, segmentos,
 
     video_stream = aplicar_subtitulos_drawtext(video_stream, segmentos, y_offset_px=220)
 
-    ffmpeg.output(
-        video_stream,
-        input_clip.audio,
-        str(ruta_salida_video),
-        **{"c:v": VIDEO_CODEC, "c:a": "aac", "b:a": "192k"},
-    ).run(overwrite_output=True, quiet=True)
+    has_audio = clip_has_audio(ruta_clip)
 
+    codec_candidates = [VIDEO_CODEC]
+    if VIDEO_CODEC != "mpeg4":
+        codec_candidates.append("mpeg4")
+
+    last_error = None
+    for codec_name in codec_candidates:
+        try:
+            output_kwargs = {"c:v": codec_name, "pix_fmt": "yuv420p"}
+            if has_audio:
+                output_kwargs.update({"c:a": "aac", "b:a": "192k"})
+                ffmpeg.output(video_stream, input_clip.audio, str(ruta_salida_video), **output_kwargs).run(
+                    overwrite_output=True,
+                    quiet=False,
+                )
+            else:
+                ffmpeg.output(video_stream, str(ruta_salida_video), **output_kwargs).run(
+                    overwrite_output=True,
+                    quiet=False,
+                )
+            return
+        except Exception as e:
+            last_error = e
+            print(f"[{nombre_clip_log}] Fallo render con codec {codec_name}: {e}")
+
+    try:
+        render_clip_only_layout_cv2_fallback(ruta_clip, ruta_salida_video, segmentos, nombre_clip_log)
+        print(f"[{nombre_clip_log}] Render fallback completado.")
+        return
+    except Exception as fallback_error:
+        print(f"[{nombre_clip_log}] Fallo fallback OpenCV: {fallback_error}")
+
+    if last_error is not None:
+        raise last_error
 
 def render_stacked_layout(
     ruta_clip: Path,
@@ -659,16 +869,16 @@ def main():
 
     if not CARPETA_ENTRADA.exists():
         print(f"Error: La carpeta de entrada '{CARPETA_ENTRADA}' no existe.")
-        return
+        sys.exit(1)
 
     if OUTPUT_LAYOUT == "stacked" and not RUTA_GAMEPLAY.exists():
         print(f"Error: No se encuentra gameplay en '{RUTA_GAMEPLAY}'.")
-        return
+        sys.exit(1)
 
     clips_para_procesar = sorted([f for f in CARPETA_ENTRADA.iterdir() if f.suffix.lower() == ".mp4"])
     if not clips_para_procesar:
         print("No se encontraron clips .mp4 en la carpeta de entrada.")
-        return
+        sys.exit(1)
 
     if len(clips_para_procesar) > MAX_CLIPS_TO_EDIT:
         print(f"Limitando edicion a {MAX_CLIPS_TO_EDIT} clips (de {len(clips_para_procesar)}).")
@@ -683,8 +893,16 @@ def main():
     print(f"- Clips exitosos: {exitosos}")
     print(f"- Clips con error: {fallidos}")
 
+    if exitosos == 0:
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     if os.name != "posix":
         set_start_method("spawn", force=True)
     main()
+
+
+
+
+

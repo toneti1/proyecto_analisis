@@ -1,4 +1,4 @@
-# automatizador.py
+﻿# automatizador.py
 
 import os
 import glob
@@ -7,11 +7,13 @@ import sys
 import re
 import time
 import json
+import shutil
 
 # --- CONFIG ---
 CLIP_SELECTOR_SCRIPT = "seleccion_clip.py"
 BATCH_EDITOR_SCRIPT = "crear_videos_en_lote.py"
 CLIPS_FOLDER = "clips"
+EDITED_FOLDER = "clips_editados"
 PROCESSED_VIDEOS_LOG = "processed_videos.txt"
 VIDEOS_SOURCE_FILE = "videos_virales_final.json"
 
@@ -80,6 +82,31 @@ def clean_clips_folder():
     print("Carpeta de clips limpiada.")
 
 
+def clean_edited_folder():
+    print(f"Limpiando carpeta '{EDITED_FOLDER}'...")
+    edited_root = os.path.join(os.getcwd(), EDITED_FOLDER)
+    if not os.path.exists(edited_root):
+        print("La carpeta de editados no existe todavia.")
+        return
+
+    deleted_any = False
+    for entry in os.listdir(edited_root):
+        full_path = os.path.join(edited_root, entry)
+        try:
+            if os.path.isdir(full_path):
+                shutil.rmtree(full_path)
+            else:
+                os.remove(full_path)
+            deleted_any = True
+        except OSError as e:
+            print(f"Error al eliminar {full_path}: {e}")
+
+    if deleted_any:
+        print("Carpeta de editados limpiada.")
+    else:
+        print("La carpeta de editados ya estaba limpia.")
+
+
 def run_script(script_name, *args, env_overrides=None):
     try:
         venv_python = os.path.join(os.getcwd(), "env_clips_act", "Scripts", "python.exe")
@@ -104,7 +131,7 @@ def run_script(script_name, *args, env_overrides=None):
 
 
 def infer_edited_paths_for_raw(clips_raw):
-    clips_editados_folder = os.path.join(os.getcwd(), "clips_editados")
+    clips_editados_folder = os.path.join(os.getcwd(), EDITED_FOLDER)
     inferred = []
 
     for raw_clip in clips_raw:
@@ -118,6 +145,16 @@ def infer_edited_paths_for_raw(clips_raw):
             inferred.append(expected)
 
     return sorted(inferred)
+
+
+def list_edited_outputs():
+    pattern_primary = os.path.join(EDITED_FOLDER, "editado_*", "editado_*.mp4")
+    found = sorted(glob.glob(pattern_primary))
+    if found:
+        return found
+
+    pattern_fallback = os.path.join(EDITED_FOLDER, "**", "*.mp4")
+    return sorted(glob.glob(pattern_fallback, recursive=True))
 
 
 def build_env_overrides(clip_count=None):
@@ -180,6 +217,7 @@ def main_orchestrator():
         print(f"URL: {url}")
 
         clean_clips_folder()
+        clean_edited_folder()
 
         if not run_script(CLIP_SELECTOR_SCRIPT, url, env_overrides=env_overrides):
             print("Fallo en seleccion_clip.py. Saltando video.")
@@ -229,6 +267,7 @@ def process_video_file(video_path: str, clip_count: int = 12):
 def process_source(source: str, clip_count: int = 12):
     env_overrides = build_env_overrides(clip_count=clip_count)
     clean_clips_folder()
+    clean_edited_folder()
 
     # source puede ser URL o ruta local a video.
     if not run_script(CLIP_SELECTOR_SCRIPT, source, env_overrides=env_overrides):
@@ -238,10 +277,17 @@ def process_source(source: str, clip_count: int = 12):
     if not clips_raw:
         return {"clips_raw": [], "clips_edited": []}
 
-    if not run_script(BATCH_EDITOR_SCRIPT, env_overrides=env_overrides):
+    editor_ok = run_script(BATCH_EDITOR_SCRIPT, env_overrides=env_overrides)
+    clips_edited = list_edited_outputs()
+    if not clips_edited:
+        clips_edited = infer_edited_paths_for_raw(clips_raw)
+
+    if not editor_ok and not clips_edited:
         return {"clips_raw": clips_raw, "clips_edited": []}
 
-    clips_edited = infer_edited_paths_for_raw(clips_raw)
+    if not editor_ok and clips_edited:
+        print("Se detectaron clips editados parciales pese a errores en el editor.")
+
     return {"clips_raw": clips_raw, "clips_edited": clips_edited}
 
 
