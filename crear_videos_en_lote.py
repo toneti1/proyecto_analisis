@@ -1,8 +1,6 @@
 ﻿import os
 import sys
 import cv2
-import whisper
-import torch
 import numpy as np
 try:
     from insightface.app import FaceAnalysis
@@ -187,17 +185,11 @@ CENSURA_REGEX = re.compile(r"\b(" + "|".join(re.escape(k) for k in CENSURA_DICT.
 print("Inicializando modelos y configuracion...")
 
 providers = ["CPUExecutionProvider"]
-if torch.cuda.is_available():
-    DEVICE = "cuda"
-    FP16 = True
-    VIDEO_CODEC = "h264_nvenc"
-    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-    print("GPU NVIDIA detectada. Usando cuda y h264_nvenc.")
-else:
-    DEVICE = "cpu"
-    FP16 = False
-    VIDEO_CODEC = "libx264"
-    print("GPU no detectada. Usando cpu y libx264.")
+# Cloud-first default: avoid importing torch/cuda just to detect GPU.
+DEVICE = "cpu"
+FP16 = False
+VIDEO_CODEC = "libx264"
+print("Usando cpu y libx264 (modo estable para cloud).")
 
 MODELO_WHISPER = None
 FACE_APP = None
@@ -269,7 +261,11 @@ def get_whisper_model():
     global MODELO_WHISPER
     if MODELO_WHISPER is None:
         print(f"Cargando Whisper ({WHISPER_MODEL_SIZE})...")
-        MODELO_WHISPER = whisper.load_model(WHISPER_MODEL_SIZE, device=DEVICE)
+        try:
+            import whisper as whisper_mod
+        except Exception as e:
+            raise RuntimeError(f"Whisper no disponible: {e}")
+        MODELO_WHISPER = whisper_mod.load_model(WHISPER_MODEL_SIZE, device=DEVICE)
     return MODELO_WHISPER
 
 
@@ -951,6 +947,7 @@ if __name__ == "__main__":
     if os.name != "posix":
         set_start_method("spawn", force=True)
     main()
+
 
 
 

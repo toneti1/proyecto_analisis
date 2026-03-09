@@ -7,37 +7,14 @@ from pathlib import Path
 
 import streamlit as st
 
-ZIP_MAX_TOTAL_MB = 250
 PREVIEW_MAX_MB = 120
+MAX_SAFE_DOWNLOAD_MB = int(os.getenv("MAX_SAFE_DOWNLOAD_MB", "80"))
 
 
 def human_size(num_bytes: int) -> str:
     size_mb = num_bytes / (1024 * 1024)
     return f"{size_mb:.1f} MB"
 
-
-def build_zip_buffer(file_paths):
-    buf = BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in file_paths:
-            if os.path.exists(path):
-                zf.write(path, os.path.basename(path))
-    buf.seek(0)
-    return buf
-
-
-
-def build_zip_file(file_paths) -> Path:
-    temp_dir = Path("user_data") / "tmp_zips"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = temp_dir / f"edited_clips_{int(time.time())}.zip"
-
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in file_paths:
-            if os.path.exists(path):
-                zf.write(path, os.path.basename(path))
-
-    return zip_path
 
 def build_local_downloader_zip() -> BytesIO:
     downloader_py = '''#!/usr/bin/env python3
@@ -133,31 +110,37 @@ def render_download_section(file_paths, key_prefix: str, title: str):
         st.write(f"- {os.path.basename(path)} ({human_size(os.path.getsize(path))})")
 
     selected = st.selectbox(
-        "Choose a clip to download and preview",
+        "Choose a clip to download",
         options=existing,
         format_func=lambda p: os.path.basename(p),
         key=f"{key_prefix}_selected",
     )
 
-    with open(selected, "rb") as f:
-        st.download_button(
-            "Download Selected Clip",
-            data=f,
-            file_name=os.path.basename(selected),
-            mime="video/mp4",
-            key=f"{key_prefix}_download_selected",
-            use_container_width=True,
-        )
-
-    with st.expander("Preview selected clip"):
-        selected_mb = os.path.getsize(selected) / (1024 * 1024)
-        if selected_mb <= PREVIEW_MAX_MB:
-            st.video(selected)
-        else:
-            st.info(
-                f"Preview disabled for large files ({selected_mb:.1f} MB). "
-                "Download the clip to view it locally."
+    selected_size_mb = os.path.getsize(selected) / (1024 * 1024)
+    if selected_size_mb <= MAX_SAFE_DOWNLOAD_MB:
+        with open(selected, "rb") as f:
+            st.download_button(
+                "Download Selected Clip",
+                data=f,
+                file_name=os.path.basename(selected),
+                mime="video/mp4",
+                key=f"{key_prefix}_download_selected",
+                use_container_width=True,
             )
+    else:
+        st.warning(
+            f"This clip is {selected_size_mb:.1f} MB. "
+            "Download is disabled in cloud mode for large files to prevent app crashes."
+        )
+        st.caption("Reduce clip size/bitrate or run locally for large-file downloads.")
+
+    if selected_size_mb <= PREVIEW_MAX_MB:
+        st.caption("Preview available for this file after download.")
+    else:
+        st.caption(
+            f"Preview disabled for large files ({selected_size_mb:.1f} MB). "
+            "Download the clip to view it locally."
+        )
 
 
 def save_uploaded_video(uploaded_file) -> str:
@@ -226,31 +209,21 @@ if run_btn:
             else:
                 if clips_edited:
                     st.success(f"Generated {len(clips_edited)} edited clips.")
-
-                    edited_total_mb = total_size_bytes(clips_edited) / (1024 * 1024)
-                    if edited_total_mb <= ZIP_MAX_TOTAL_MB:
-                        zip_path = build_zip_file(clips_edited)
-                        with open(zip_path, "rb") as zf:
-                            st.download_button(
-                                "Download All Edited Clips (ZIP)",
-                                data=zf,
-                                file_name="edited_clips.zip",
-                                mime="application/zip",
-                                use_container_width=True,
-                            )
-                    else:
-                        st.warning(
-                            "ZIP download is disabled for very large outputs to keep the app stable. "
-                            "Download clips one by one below."
-                        )
-
+                    st.caption("Bulk ZIP download is disabled in cloud mode for stability. Download clips one by one below.")
                     render_download_section(clips_edited, key_prefix="edited", title="Edited Clips")
                 else:
                     st.warning("No edited clips were generated.")
 
                 if clips_raw:
-                    with st.expander("Raw clips (downloads + preview)"):
-                        render_download_section(clips_raw, key_prefix="raw", title="Raw Clips")
+                    with st.expander("Raw clips (downloads only)"):
+                        st.caption("Raw clips are optional and can be very large.")
+                        show_raw = st.checkbox(
+                            "Show raw clip downloads",
+                            value=False,
+                            key="show_raw_downloads",
+                        )
+                        if show_raw:
+                            render_download_section(clips_raw, key_prefix="raw", title="Raw Clips")
 
         except Exception as e:
             st.error(f"Pipeline error: {e}")
@@ -263,6 +236,3 @@ if run_btn:
                     os.remove(local_upload_path)
                 except Exception:
                     pass
-
-
-
