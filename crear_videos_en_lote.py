@@ -731,12 +731,12 @@ def render_clip_only_layout(ruta_clip: Path, ruta_salida_video: Path, segmentos,
                 output_kwargs.update({"c:a": "aac", "b:a": "192k"})
                 ffmpeg.output(video_stream, input_clip.audio, str(ruta_salida_video), **output_kwargs).run(
                     overwrite_output=True,
-                    quiet=False,
+                    quiet=True,
                 )
             else:
                 ffmpeg.output(video_stream, str(ruta_salida_video), **output_kwargs).run(
                     overwrite_output=True,
-                    quiet=False,
+                    quiet=True,
                 )
             return
         except Exception as e:
@@ -753,6 +753,55 @@ def render_clip_only_layout(ruta_clip: Path, ruta_salida_video: Path, segmentos,
     if last_error is not None:
         raise last_error
 
+
+def enforce_vertical_with_audio(ruta_salida_video: Path, ruta_clip: Path, nombre_clip_log: str):
+    temp_final = ruta_salida_video.with_suffix(".final.mp4")
+    vf_expr = (
+        f"scale={ANCHO_SALIDA}:{ALTO_SALIDA}:force_original_aspect_ratio=decrease,"
+        f"pad={ANCHO_SALIDA}:{ALTO_SALIDA}:(ow-iw)/2:(oh-ih)/2:color=black"
+    )
+
+    codec_candidates = ["libx264", "mpeg4"]
+    last_error = None
+
+    for codec_name in codec_candidates:
+        try:
+            cmd = [
+                FFMPEG_BIN,
+                "-y",
+                "-i",
+                str(ruta_salida_video),
+                "-i",
+                str(ruta_clip),
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0?",
+                "-vf",
+                vf_expr,
+                "-c:v",
+                codec_name,
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-shortest",
+                str(temp_final),
+            ]
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            os.replace(str(temp_final), str(ruta_salida_video))
+            return
+        except Exception as e:
+            last_error = e
+            print(f"[{nombre_clip_log}] Fallo normalizacion final con {codec_name}: {e}")
+
+    if temp_final.exists():
+        temp_final.unlink(missing_ok=True)
+
+    if last_error is not None:
+        raise last_error
 def render_stacked_layout(
     ruta_clip: Path,
     ruta_salida_video: Path,
@@ -847,6 +896,7 @@ def procesar_un_solo_clip(ruta_clip: Path, carpeta_salida_principal: Path):
                 nombre_clip_log,
             )
 
+        enforce_vertical_with_audio(ruta_salida_video, ruta_clip, nombre_clip_log)
         return True
 
     except Exception:
@@ -901,6 +951,7 @@ if __name__ == "__main__":
     if os.name != "posix":
         set_start_method("spawn", force=True)
     main()
+
 
 
 
