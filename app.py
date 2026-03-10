@@ -1,6 +1,10 @@
-﻿import os
+﻿import json
+import os
 import re
+import subprocess
+import sys
 import time
+import uuid
 import zipfile
 from io import BytesIO
 from pathlib import Path
@@ -9,6 +13,8 @@ import streamlit as st
 
 PREVIEW_MAX_MB = 120
 MAX_SAFE_DOWNLOAD_MB = int(os.getenv("MAX_SAFE_DOWNLOAD_MB", "80"))
+JOBS_DIR = Path("user_data") / "jobs"
+LOG_TAIL_LINES = 200
 
 
 def human_size(num_bytes: int) -> str:
@@ -163,6 +169,96 @@ def save_uploaded_video(uploaded_file) -> str:
     return str(destination)
 
 
+def read_job(job_path: Path) -> dict:
+    try:
+        with open(job_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def write_job(job_path: Path, payload: dict) -> None:
+    job_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = job_path.with_suffix(".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=True, indent=2)
+    tmp_path.replace(job_path)
+
+
+def tail_log(log_path: Path, max_lines: int = LOG_TAIL_LINES) -> str:
+    if not log_path.exists():
+        return ""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+    lines = text.splitlines()
+    if len(lines) > max_lines:
+        lines = lines[-max_lines:]
+    return "\n".join(lines)
+
+
+def find_latest_job_path() -> str:
+    if not JOBS_DIR.exists():
+        return ""
+    candidates = sorted(
+        JOBS_DIR.glob("*/job.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return str(candidates[0]) if candidates else ""
+
+
+def start_pipeline_job(upload_path: str, clip_count: int) -> dict:
+    job_id = f"{int(time.time())}_{uuid.uuid4().hex[:8]}"
+    job_dir = JOBS_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    job_path = job_dir / "job.json"
+    log_path = job_dir / "run.log"
+
+    payload = {
+        "id": job_id,
+        "state": "running",
+        "input_path": upload_path,
+        "clip_count": int(clip_count),
+        "log_path": str(log_path),
+        "job_path": str(job_path),
+        "started_at": int(time.time()),
+    }
+    write_job(job_path, payload)
+
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    cmd = [
+        sys.executable,
+        "run_pipeline.py",
+        "--input",
+        upload_path,
+        "--clip-count",
+        str(int(clip_count)),
+        "--job",
+        str(job_path),
+    ]
+
+    log_file = open(log_path, "a", encoding="utf-8")
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(Path(__file__).parent),
+            stdout=log_file,
+            stderr=log_file,
+            env=env,
+        )
+    finally:
+        log_file.flush()
+        log_file.close()
+
+    payload["pid"] = proc.pid
+    write_job(job_path, payload)
+    return payload
+
+
 st.set_page_config(page_title="Clip Generator", layout="wide")
 st.title("Clip Generator")
 
@@ -189,50 +285,83 @@ uploaded_video = st.file_uploader(
 clip_count = st.number_input("How many clips?", min_value=1, max_value=40, value=12, step=1)
 run_btn = st.button("Generate Clips", type="primary")
 
+active_job_path = st.session_state.get("active_job_path")
+if not active_job_path:
+    latest_job_path = find_latest_job_path()
+    if latest_job_path:
+        active_job_path = latest_job_path
+        st.session_state["active_job_path"] = latest_job_path
+
+job = read_job(Path(active_job_path)) if active_job_path else {}
+job_state = job.get("state") if job else None
+
 if run_btn:
-    if uploaded_video is None:
+    if job_state == "running":
+        st.warning("A pipeline job is already running. Please wait for it to finish.")
+    elif uploaded_video is None:
         st.error("Please upload a video file.")
     else:
-        local_upload_path = None
-        try:
-            with st.spinner("Running pipeline. This can take a few minutes..."):
-                from automatizador import process_video_file
+        local_upload_path = save_uploaded_video(uploaded_video)
+        job = start_pipeline_job(local_upload_path, clip_count=int(clip_count))
+        st.session_state["active_job_path"] = job.get("job_path")
+        job_state = "running"
 
-                local_upload_path = save_uploaded_video(uploaded_video)
-                result = process_video_file(local_upload_path, clip_count=int(clip_count))
+if job_state == "running":
+    st.info("Pipeline is running. This can take a while for long videos.")
+    if job.get("id"):
+        st.caption(f"Job ID: {job.get('id')}")
+    st.button("Refresh status")
 
-            clips_raw = [p for p in result.get("clips_raw", []) if os.path.exists(p)]
-            clips_edited = [p for p in result.get("clips_edited", []) if os.path.exists(p)]
+    log_path = Path(job.get("log_path", ""))
+    log_text = tail_log(log_path)
+    if log_text:
+        with st.expander("Recent logs"):
+            st.code(log_text, language="text")
+    st.stop()
 
-            if not clips_raw and not clips_edited:
-                st.error("The pipeline finished without generating clips. Check terminal logs.")
-            else:
-                if clips_edited:
-                    st.success(f"Generated {len(clips_edited)} edited clips.")
-                    st.caption("Bulk ZIP download is disabled in cloud mode for stability. Download clips one by one below.")
-                    render_download_section(clips_edited, key_prefix="edited", title="Edited Clips")
-                else:
-                    st.warning("No edited clips were generated.")
+if job_state == "error":
+    st.error(job.get("error", "Pipeline failed. Check logs for details."))
+    log_path = Path(job.get("log_path", ""))
+    log_text = tail_log(log_path)
+    if log_text:
+        with st.expander("Recent logs"):
+            st.code(log_text, language="text")
+    if st.button("Clear job"):
+        if "active_job_path" in st.session_state:
+            del st.session_state["active_job_path"]
+        st.stop()
 
-                if clips_raw:
-                    with st.expander("Raw clips (downloads only)"):
-                        st.caption("Raw clips are optional and can be very large.")
-                        show_raw = st.checkbox(
-                            "Show raw clip downloads",
-                            value=False,
-                            key="show_raw_downloads",
-                        )
-                        if show_raw:
-                            render_download_section(clips_raw, key_prefix="raw", title="Raw Clips")
+if job_state == "done":
+    result = job.get("result") or {}
+    clips_raw = [p for p in result.get("clips_raw", []) if os.path.exists(p)]
+    clips_edited = [p for p in result.get("clips_edited", []) if os.path.exists(p)]
 
-        except Exception as e:
-            st.error(f"Pipeline error: {e}")
-            import traceback
+    if not clips_raw and not clips_edited:
+        st.error("The pipeline finished without generating clips. Check logs.")
+        log_path = Path(job.get("log_path", ""))
+        log_text = tail_log(log_path)
+        if log_text:
+            with st.expander("Recent logs"):
+                st.code(log_text, language="text")
+    else:
+        if clips_edited:
+            st.success(f"Generated {len(clips_edited)} edited clips.")
+            st.caption("Bulk ZIP download is disabled in cloud mode for stability. Download clips one by one below.")
+            render_download_section(clips_edited, key_prefix="edited", title="Edited Clips")
+        else:
+            st.warning("No edited clips were generated.")
 
-            traceback.print_exc()
-        finally:
-            if local_upload_path and os.path.exists(local_upload_path):
-                try:
-                    os.remove(local_upload_path)
-                except Exception:
-                    pass
+        if clips_raw:
+            with st.expander("Raw clips (downloads only)"):
+                st.caption("Raw clips are optional and can be very large.")
+                show_raw = st.checkbox(
+                    "Show raw clip downloads",
+                    value=False,
+                    key="show_raw_downloads",
+                )
+                if show_raw:
+                    render_download_section(clips_raw, key_prefix="raw", title="Raw Clips")
+
+    if st.button("Start new job"):
+        if "active_job_path" in st.session_state:
+            del st.session_state["active_job_path"]
