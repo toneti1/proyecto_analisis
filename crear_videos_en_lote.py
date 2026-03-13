@@ -16,6 +16,7 @@ import random
 import re
 import json
 from fractions import Fraction
+from typing import Optional
 import shutil
 import tempfile
 
@@ -381,55 +382,131 @@ def draw_subtitle_cv2(frame, text: str):
 
 def render_clip_only_layout_cv2_fallback(ruta_clip: Path, ruta_salida_video: Path, segmentos, nombre_clip_log: str):
     print(f"[{nombre_clip_log}] Activando fallback OpenCV para render.")
-    temp_video = ruta_salida_video.with_suffix(".noaudio.mp4")
+    temp_video = None
 
-    cap = cv2.VideoCapture(str(ruta_clip))
-    if not cap.isOpened():
+    cap_probe = cv2.VideoCapture(str(ruta_clip))
+    if not cap_probe.isOpened():
         raise RuntimeError(f"No se pudo abrir clip para fallback: {ruta_clip}")
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
+    fps = cap_probe.get(cv2.CAP_PROP_FPS)
     if not fps or fps <= 0:
         fps = 30.0
-
-    writer = cv2.VideoWriter(
-        str(temp_video),
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        fps,
-        (ANCHO_SALIDA, ALTO_SALIDA),
-    )
-    if not writer.isOpened():
-        cap.release()
-        raise RuntimeError("No se pudo iniciar VideoWriter fallback (mp4v).")
+    cap_probe.release()
 
     cues = build_word_cues(segmentos)
-    cue_idx = 0
-    frame_idx = 0
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
+    def render_frames(cap, write_frame):
+        cue_idx = 0
+        frame_idx = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            t = frame_idx / fps
+            while cue_idx < len(cues) and t > cues[cue_idx][1]:
+                cue_idx += 1
+
+            frame_out = fit_frame_to_canvas(frame, ANCHO_SALIDA, ALTO_SALIDA)
+            if cue_idx < len(cues):
+                start, end, text = cues[cue_idx]
+                if start <= t <= end:
+                    frame_out = draw_subtitle_cv2(frame_out, text)
+
+            write_frame(frame_out)
+            frame_idx += 1
+        return frame_idx
+
+    def try_ffmpeg_raw_encode(codec_name: str) -> Optional[Path]:
+        temp_path = ruta_salida_video.with_suffix(".noaudio.mp4")
+        cmd = [
+            FFMPEG_BIN,
+            "-y",
+            "-f",
+            "rawvideo",
+            "-vcodec",
+            "rawvideo",
+            "-pix_fmt",
+            "bgr24",
+            "-s",
+            f"{ANCHO_SALIDA}x{ALTO_SALIDA}",
+            "-r",
+            str(fps),
+            "-i",
+            "-",
+            "-an",
+            "-c:v",
+            codec_name,
+            "-pix_fmt",
+            "yuv420p",
+            str(temp_path),
+        ]
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        cap = cv2.VideoCapture(str(ruta_clip))
+        if not cap.isOpened():
+            proc.kill()
+            return None
+
+        frame_idx = render_frames(cap, lambda fr: proc.stdin.write(fr.tobytes()))
+        cap.release()
+        try:
+            proc.stdin.close()
+        except Exception:
+            pass
+        _, stderr_output = proc.communicate()
+
+        if frame_idx == 0 or proc.returncode != 0:
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+            if stderr_output:
+                err_text = stderr_output.decode(errors="ignore").strip()
+                tail = "\n".join(err_text.splitlines()[-6:])
+                print(f"[{nombre_clip_log}] ffmpeg rawvideo stderr ({codec_name}):\n{tail}")
+            return None
+
+        return temp_path
+
+    for codec_name in ("libx264", "mpeg4"):
+        temp_video = try_ffmpeg_raw_encode(codec_name)
+        if temp_video is not None:
             break
 
-        t = frame_idx / fps
-        while cue_idx < len(cues) and t > cues[cue_idx][1]:
-            cue_idx += 1
+    if temp_video is None:
+        codec_candidates = [
+            ("mp4v", ".noaudio.mp4"),
+            ("MJPG", ".noaudio.avi"),
+            ("XVID", ".noaudio.avi"),
+        ]
+        writer = None
+        for fourcc, suffix in codec_candidates:
+            temp_video = ruta_salida_video.with_suffix(suffix)
+            writer = cv2.VideoWriter(
+                str(temp_video),
+                cv2.VideoWriter_fourcc(*fourcc),
+                fps,
+                (ANCHO_SALIDA, ALTO_SALIDA),
+            )
+            if writer.isOpened():
+                break
+            writer.release()
+            writer = None
 
-        frame_out = fit_frame_to_canvas(frame, ANCHO_SALIDA, ALTO_SALIDA)
-        if cue_idx < len(cues):
-            start, end, text = cues[cue_idx]
-            if start <= t <= end:
-                frame_out = draw_subtitle_cv2(frame_out, text)
+        if writer is None or not writer.isOpened():
+            raise RuntimeError("No se pudo iniciar VideoWriter fallback (mp4v/mjpg/xvid).")
 
-        writer.write(frame_out)
-        frame_idx += 1
+        cap = cv2.VideoCapture(str(ruta_clip))
+        if not cap.isOpened():
+            writer.release()
+            raise RuntimeError(f"No se pudo abrir clip para fallback: {ruta_clip}")
 
-    cap.release()
-    writer.release()
+        frame_idx = render_frames(cap, writer.write)
+        cap.release()
+        writer.release()
 
-    if frame_idx == 0:
-        if temp_video.exists():
-            temp_video.unlink(missing_ok=True)
-        raise RuntimeError("Fallback OpenCV no produjo frames.")
+        if frame_idx == 0:
+            if temp_video and temp_video.exists():
+                temp_video.unlink(missing_ok=True)
+            raise RuntimeError("Fallback OpenCV no produjo frames.")
 
     if clip_has_audio(ruta_clip):
         try:
@@ -462,7 +539,40 @@ def render_clip_only_layout_cv2_fallback(ruta_clip: Path, ruta_salida_video: Pat
         except Exception as e:
             print(f"[{nombre_clip_log}] No se pudo mezclar audio en fallback: {e}")
 
-    os.replace(str(temp_video), str(ruta_salida_video))
+    def finalize_temp_video(temp_path: Path) -> None:
+        if temp_path.suffix.lower() == ".mp4":
+            os.replace(str(temp_path), str(ruta_salida_video))
+            return
+
+        for codec_name in ("libx264", "mpeg4"):
+            try:
+                subprocess.run(
+                    [
+                        FFMPEG_BIN,
+                        "-y",
+                        "-i",
+                        str(temp_path),
+                        "-an",
+                        "-c:v",
+                        codec_name,
+                        "-pix_fmt",
+                        "yuv420p",
+                        str(ruta_salida_video),
+                    ],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                temp_path.unlink(missing_ok=True)
+                return
+            except Exception as e:
+                print(f"[{nombre_clip_log}] Fallo transcode fallback {codec_name}: {e}")
+
+        print(f"[{nombre_clip_log}] Aviso: dejando contenedor original ({temp_path.suffix}).")
+        os.replace(str(temp_path), str(ruta_salida_video))
+
+    if temp_video is not None:
+        finalize_temp_video(temp_video)
 
 
 def obtener_posiciones_suavizadas_cara(ruta_video: Path, w: int, h: int) -> list:
@@ -727,16 +837,27 @@ def render_clip_only_layout(ruta_clip: Path, ruta_salida_video: Path, segmentos,
                 output_kwargs.update({"c:a": "aac", "b:a": "192k"})
                 ffmpeg.output(video_stream, input_clip.audio, str(ruta_salida_video), **output_kwargs).run(
                     overwrite_output=True,
-                    quiet=True,
+                    capture_stdout=True,
+                    capture_stderr=True,
                 )
             else:
                 ffmpeg.output(video_stream, str(ruta_salida_video), **output_kwargs).run(
                     overwrite_output=True,
-                    quiet=True,
+                    capture_stdout=True,
+                    capture_stderr=True,
                 )
             return
         except Exception as e:
             last_error = e
+            err_text = ""
+            if hasattr(e, "stderr") and e.stderr:
+                try:
+                    err_text = e.stderr.decode(errors="ignore").strip()
+                except Exception:
+                    err_text = str(e.stderr)
+            if err_text:
+                tail = "\n".join(err_text.splitlines()[-6:])
+                print(f"[{nombre_clip_log}] ffmpeg stderr ({codec_name}):\n{tail}")
             print(f"[{nombre_clip_log}] Fallo render con codec {codec_name}: {e}")
 
     try:

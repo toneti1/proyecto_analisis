@@ -17,10 +17,48 @@ EDITED_FOLDER = "clips_editados"
 PROCESSED_VIDEOS_LOG = "processed_videos.txt"
 VIDEOS_SOURCE_FILE = "videos_virales_final.json"
 
-MAX_VIDEOS_TO_PROCESS = int(os.getenv("MAX_VIDEOS_TO_PROCESS", "20"))
+MAX_VIDEOS_TO_PROCESS = int(os.getenv("MAX_VIDEOS_TO_PROCESS", "1"))
 WAIT_AFTER_SUCCESS_S = int(os.getenv("WAIT_AFTER_SUCCESS_S", "2"))
 WAIT_AFTER_ERROR_S = int(os.getenv("WAIT_AFTER_ERROR_S", "3"))
 WAIT_AFTER_EMPTY_S = int(os.getenv("WAIT_AFTER_EMPTY_S", "1"))
+
+
+def resolve_yt_dlp_command():
+    venv_python = os.path.join(os.getcwd(), "env_clips_act", "Scripts", "python.exe")
+    python_executable = venv_python if os.path.exists(venv_python) else sys.executable
+    return [python_executable, "-m", "yt_dlp"]
+
+
+def download_video_with_yt_dlp(url: str, output_folder: str) -> str:
+    os.makedirs(output_folder, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    output_path = os.path.join(output_folder, f"{ts}.mp4")
+    print(f"[+] Descargando video: {url} -> {output_path}")
+    command_base = resolve_yt_dlp_command()
+
+    command = command_base + [
+        "-f",
+        "bestvideo+bestaudio/best",
+        "--merge-output-format",
+        "mp4",
+        url,
+        "-o",
+        output_path,
+    ]
+
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as e:
+        print("ERROR: yt-dlp fallo:", e)
+        return ""
+
+    if os.path.exists(output_path):
+        print("[OK] Descarga completada.")
+        return output_path
+
+    print("ERROR: yt-dlp no produjo el archivo esperado.")
+    return ""
+
 
 
 def load_processed_videos():
@@ -216,10 +254,30 @@ def main_orchestrator():
         print(f"Procesando ID: {video_id}")
         print(f"URL: {url}")
 
+        source_to_process = url
+        downloaded_path = ""
+        if url.startswith("http"):
+            downloaded_path = download_video_with_yt_dlp(url, os.getcwd())
+            if not downloaded_path:
+                print("Fallo descargando video. Saltando video.")
+                time.sleep(WAIT_AFTER_ERROR_S)
+                current_index += 1
+                continue
+            source_to_process = downloaded_path
+
         clean_clips_folder()
         clean_edited_folder()
 
-        if not run_script(CLIP_SELECTOR_SCRIPT, url, env_overrides=env_overrides):
+        try:
+            ok = run_script(CLIP_SELECTOR_SCRIPT, source_to_process, env_overrides=env_overrides)
+        finally:
+            if downloaded_path and os.path.exists(downloaded_path):
+                try:
+                    os.remove(downloaded_path)
+                except OSError as e:
+                    print(f"Error al eliminar {downloaded_path}: {e}")
+
+        if not ok:
             print("Fallo en seleccion_clip.py. Saltando video.")
             time.sleep(WAIT_AFTER_ERROR_S)
             current_index += 1
@@ -252,10 +310,12 @@ def main_orchestrator():
     print(f"Videos nuevos procesados: {new_videos_processed_count}")
 
 
+
 def process_url(url: str, clip_count: int = 12):
     if not url or not url.strip():
         raise ValueError("URL vacia o invalida.")
     return process_source(url.strip(), clip_count=clip_count)
+
 
 
 def process_video_file(video_path: str, clip_count: int = 12):
@@ -264,14 +324,29 @@ def process_video_file(video_path: str, clip_count: int = 12):
     return process_source(video_path, clip_count=clip_count)
 
 
+
 def process_source(source: str, clip_count: int = 12):
     env_overrides = build_env_overrides(clip_count=clip_count)
     clean_clips_folder()
     clean_edited_folder()
 
-    # source puede ser URL o ruta local a video.
-    if not run_script(CLIP_SELECTOR_SCRIPT, source, env_overrides=env_overrides):
-        return {"clips_raw": [], "clips_edited": []}
+    source_to_use = source
+    downloaded_path = ""
+    if isinstance(source, str) and source.startswith("http"):
+        downloaded_path = download_video_with_yt_dlp(source, os.getcwd())
+        if not downloaded_path:
+            return {"clips_raw": [], "clips_edited": []}
+        source_to_use = downloaded_path
+
+    try:
+        if not run_script(CLIP_SELECTOR_SCRIPT, source_to_use, env_overrides=env_overrides):
+            return {"clips_raw": [], "clips_edited": []}
+    finally:
+        if downloaded_path and os.path.exists(downloaded_path):
+            try:
+                os.remove(downloaded_path)
+            except OSError as e:
+                print(f"Error al eliminar {downloaded_path}: {e}")
 
     clips_raw = sorted(glob.glob(os.path.join(CLIPS_FOLDER, "*.mp4")))
     if not clips_raw:

@@ -312,20 +312,12 @@ if job_state == "running":
         st.caption(f"Job ID: {job.get('id')}")
     st.button("Refresh status")
 
-    log_path = Path(job.get("log_path", ""))
-    log_text = tail_log(log_path)
-    if log_text:
-        with st.expander("Recent logs"):
-            st.code(log_text, language="text")
+    st.caption("Check logs in the app console (Manage app).")
     st.stop()
 
 if job_state == "error":
     st.error(job.get("error", "Pipeline failed. Check logs for details."))
-    log_path = Path(job.get("log_path", ""))
-    log_text = tail_log(log_path)
-    if log_text:
-        with st.expander("Recent logs"):
-            st.code(log_text, language="text")
+    st.caption("Check logs in the app console (Manage app).")
     if st.button("Clear job"):
         if "active_job_path" in st.session_state:
             del st.session_state["active_job_path"]
@@ -338,29 +330,25 @@ if job_state == "done":
 
     if not clips_raw and not clips_edited:
         st.error("The pipeline finished without generating clips. Check logs.")
-        log_path = Path(job.get("log_path", ""))
-        log_text = tail_log(log_path)
-        if log_text:
-            with st.expander("Recent logs"):
-                st.code(log_text, language="text")
-    else:
-        if clips_edited:
-            st.success(f"Generated {len(clips_edited)} edited clips.")
-            st.caption("Bulk ZIP download is disabled in cloud mode for stability. Download clips one by one below.")
-            render_download_section(clips_edited, key_prefix="edited", title="Edited Clips")
-        else:
-            st.warning("No edited clips were generated.")
+        st.caption("Check logs in the app console (Manage app).")
 
-        if clips_raw:
-            with st.expander("Raw clips (downloads only)"):
-                st.caption("Raw clips are optional and can be very large.")
-                show_raw = st.checkbox(
-                    "Show raw clip downloads",
-                    value=False,
-                    key="show_raw_downloads",
-                )
-                if show_raw:
-                    render_download_section(clips_raw, key_prefix="raw", title="Raw Clips")
+    if clips_edited:
+        st.success(f"Generated {len(clips_edited)} edited clips.")
+        st.caption("Bulk ZIP download is disabled in cloud mode for stability. Download clips one by one below.")
+        render_download_section(clips_edited, key_prefix="edited", title="Edited Clips")
+    else:
+        st.warning("No edited clips were generated.")
+
+    if clips_raw:
+        with st.expander("Raw clips (downloads only)"):
+            st.caption("Raw clips are optional and can be very large.")
+            show_raw = st.checkbox(
+                "Show raw clip downloads",
+                value=False,
+                key="show_raw_downloads",
+            )
+            if show_raw:
+                render_download_section(clips_raw, key_prefix="raw", title="Raw Clips")
 
     if st.button("Start new job"):
         if "active_job_path" in st.session_state:
