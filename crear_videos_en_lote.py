@@ -127,7 +127,7 @@ ensure_ffmpeg_in_path(FFMPEG_BIN)
 ANCHO_SALIDA = 1080
 ALTO_SALIDA = 1920
 TAMANO_FUENTE_DRAWTEXT = 70
-PALABRAS_POR_SUBTITULO = 3
+PALABRAS_POR_SUBTITULO = _env_int("PALABRAS_POR_SUBTITULO", 3, min_value=1)
 FACTOR_SUAVIZADO_CARA = 25
 
 CENSURA_DICT = {
@@ -403,7 +403,9 @@ def render_clip_only_layout_cv2_fallback(ruta_clip: Path, ruta_salida_video: Pat
             if not ret:
                 break
 
-            t = frame_idx / fps
+            t = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+            if not t or t <= 0:
+                t = frame_idx / fps
             while cue_idx < len(cues) and t > cues[cue_idx][1]:
                 cue_idx += 1
 
@@ -919,6 +921,60 @@ def enforce_vertical_with_audio(ruta_salida_video: Path, ruta_clip: Path, nombre
 
     if last_error is not None:
         raise last_error
+
+
+def ensure_vertical_output(ruta_salida_video: Path, nombre_clip_log: str) -> None:
+    try:
+        probe = ffmpeg.probe(str(ruta_salida_video))
+        stream = next(s for s in probe.get("streams", []) if s.get("codec_type") == "video")
+        w = int(stream.get("width", 0) or 0)
+        h = int(stream.get("height", 0) or 0)
+    except Exception as e:
+        print(f"[{nombre_clip_log}] No se pudo verificar dimensiones finales: {e}")
+        return
+
+    if w == ANCHO_SALIDA and h == ALTO_SALIDA:
+        return
+
+    temp_final = ruta_salida_video.with_suffix(".vert.mp4")
+    vf_expr = (
+        f"scale={ANCHO_SALIDA}:{ALTO_SALIDA}:force_original_aspect_ratio=decrease,"
+        f"pad={ANCHO_SALIDA}:{ALTO_SALIDA}:(ow-iw)/2:(oh-ih)/2:color=black"
+    )
+
+    for codec_name in ("libx264", "mpeg4"):
+        try:
+            subprocess.run(
+                [
+                    FFMPEG_BIN,
+                    "-y",
+                    "-i",
+                    str(ruta_salida_video),
+                    "-vf",
+                    vf_expr,
+                    "-c:v",
+                    codec_name,
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    "-shortest",
+                    str(temp_final),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            os.replace(str(temp_final), str(ruta_salida_video))
+            print(f"[{nombre_clip_log}] Normalizado a 9:16 ({ANCHO_SALIDA}x{ALTO_SALIDA}).")
+            return
+        except Exception as e:
+            print(f"[{nombre_clip_log}] Fallo normalizando dimensiones con {codec_name}: {e}")
+
+    if temp_final.exists():
+        temp_final.unlink(missing_ok=True)
 def render_stacked_layout(
     ruta_clip: Path,
     ruta_salida_video: Path,
@@ -1014,6 +1070,7 @@ def procesar_un_solo_clip(ruta_clip: Path, carpeta_salida_principal: Path):
             )
 
         enforce_vertical_with_audio(ruta_salida_video, ruta_clip, nombre_clip_log)
+        ensure_vertical_output(ruta_salida_video, nombre_clip_log)
         return True
 
     except Exception:
