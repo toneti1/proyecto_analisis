@@ -198,6 +198,21 @@ def tail_log(log_path: Path, max_lines: int = LOG_TAIL_LINES) -> str:
     return "\n".join(lines)
 
 
+def render_log_panel(job: dict) -> None:
+    log_path = Path(job.get("log_path", "")) if job else Path()
+    if not log_path or not log_path.exists():
+        st.info("No log output available yet.")
+        return
+    log_text = tail_log(log_path)
+    st.subheader("Console output")
+    st.text_area(
+        "Latest logs",
+        value=log_text or "(no logs yet)",
+        height=320,
+        key=f"logs_{log_path.name}",
+    )
+
+
 def find_latest_job_path() -> str:
     if not JOBS_DIR.exists():
         return ""
@@ -311,13 +326,12 @@ if job_state == "running":
     if job.get("id"):
         st.caption(f"Job ID: {job.get('id')}")
     st.button("Refresh status")
-
-    st.caption("Check logs in the app console (Manage app).")
+    render_log_panel(job)
     st.stop()
 
 if job_state == "error":
     st.error(job.get("error", "Pipeline failed. Check logs for details."))
-    st.caption("Check logs in the app console (Manage app).")
+    render_log_panel(job)
     if st.button("Clear job"):
         if "active_job_path" in st.session_state:
             del st.session_state["active_job_path"]
@@ -330,7 +344,7 @@ if job_state == "done":
 
     if not clips_raw and not clips_edited:
         st.error("The pipeline finished without generating clips. Check logs.")
-        st.caption("Check logs in the app console (Manage app).")
+        render_log_panel(job)
 
     if clips_edited:
         st.success(f"Generated {len(clips_edited)} edited clips.")
@@ -349,6 +363,9 @@ if job_state == "done":
             )
             if show_raw:
                 render_download_section(clips_raw, key_prefix="raw", title="Raw Clips")
+
+    with st.expander("Console output (logs)"):
+        render_log_panel(job)
 
     if st.button("Start new job"):
         if "active_job_path" in st.session_state:
