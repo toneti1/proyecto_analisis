@@ -15,6 +15,7 @@ PREVIEW_MAX_MB = 120
 MAX_SAFE_DOWNLOAD_MB = int(os.getenv("MAX_SAFE_DOWNLOAD_MB", "80"))
 JOBS_DIR = Path("user_data") / "jobs"
 LOG_TAIL_LINES = 200
+AUTO_REFRESH_S = float(os.getenv("AUTO_REFRESH_S", "2.0"))
 
 
 def human_size(num_bytes: int) -> str:
@@ -205,12 +206,14 @@ def render_log_panel(job: dict) -> None:
         return
     log_text = tail_log(log_path)
     st.subheader("Console output")
-    st.text_area(
-        "Latest logs",
-        value=log_text or "(no logs yet)",
-        height=320,
-        key=f"logs_{log_path.name}",
-    )
+    st.code(log_text or "(no logs yet)", language="text")
+
+
+def trigger_rerun() -> None:
+    try:
+        st.rerun()
+    except AttributeError:
+        st.experimental_rerun()
 
 
 def find_latest_job_path() -> str:
@@ -327,6 +330,11 @@ if job_state == "running":
         st.caption(f"Job ID: {job.get('id')}")
     st.button("Refresh status")
     render_log_panel(job)
+    auto_refresh = st.checkbox("Auto-refresh logs", value=True)
+    if auto_refresh:
+        st.caption(f"Auto-refresh every {AUTO_REFRESH_S:.0f}s")
+        time.sleep(AUTO_REFRESH_S)
+        trigger_rerun()
     st.stop()
 
 if job_state == "error":
