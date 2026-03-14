@@ -85,6 +85,7 @@ CLIP_MAX_S = _env_int("CLIP_MAX_S", 60, min_value=5)
 CLIP_END_MIN_S = _env_int("CLIP_END_MIN_S", 60, min_value=30)
 CLIP_END_MAX_S = _env_int("CLIP_END_MAX_S", 150, min_value=60)
 CLIP_END_TARGET_S = _env_int("CLIP_END_TARGET_S", 105, min_value=60)
+CLIP_START_BACKTRACK_S = _env_int("CLIP_START_BACKTRACK_S", 20, min_value=0)
 SLIDING_STEP_S = _env_int("SLIDING_STEP_S", 5, min_value=1)
 WHISPER_SIZE = os.getenv("WHISPER_SIZE", "tiny")
 ENABLE_PROSODY = _env_flag("ENABLE_PROSODY", False)
@@ -455,6 +456,42 @@ def compute_energy_segments(audio_path: str, hop_length=512, energy_thresh_ratio
     return segments
 
 
+def _ends_with_punct(text: str) -> bool:
+    return bool(re.search(r"[.!?…]+[\"')\\]]*\\s*$", text or ""))
+
+
+def pick_natural_start(segments, start_s: float) -> float:
+    if not segments:
+        return max(0.0, start_s)
+
+    target = max(0.0, start_s - float(CLIP_START_BACKTRACK_S))
+    idx = None
+    for i, seg in enumerate(segments):
+        seg_start = float(seg.get("start", 0.0) or 0.0)
+        seg_end = float(seg.get("end", seg_start) or seg_start)
+        if seg_start <= start_s <= seg_end:
+            idx = i
+            break
+
+    if idx is None:
+        return max(0.0, start_s)
+
+    best_start = float(segments[idx].get("start", start_s) or start_s)
+
+    j = idx - 1
+    while j >= 0:
+        prev = segments[j]
+        prev_end = float(prev.get("end", 0.0) or 0.0)
+        if prev_end < target:
+            break
+        if _ends_with_punct(str(prev.get("text", "") or "").strip()):
+            best_start = float(segments[j + 1].get("start", best_start) or best_start)
+            break
+        j -= 1
+
+    return max(0.0, best_start)
+
+
 def pick_natural_end(segments, start_s: float, duration_s: float) -> float:
     if not segments:
         return min(start_s + CLIP_END_MAX_S, duration_s or (start_s + CLIP_END_MAX_S))
@@ -476,7 +513,7 @@ def pick_natural_end(segments, start_s: float, duration_s: float) -> float:
         if seg_end < min_end or seg_end > max_end:
             continue
         text = str(seg.get("text", "") or "").strip()
-        has_punct = bool(re.search(r"[.!?…]+[\"')\\]]*\\s*$", text))
+        has_punct = _ends_with_punct(text)
         score = abs(seg_end - preferred_end) + (0 if has_punct else 15)
         if best_score is None or score < best_score:
             best_score = score
@@ -970,7 +1007,10 @@ def main(input_source: str):
         end = clip['end_time']
         score = clip['viral_score']
         duration_for_end = float(segments[-1].get("end", 0.0)) if segments else end
+        start = pick_natural_start(segments, start)
         end = pick_natural_end(segments, start, duration_for_end)
+        if end <= start:
+            end = min(start + CLIP_END_MIN_S, duration_for_end or (start + CLIP_END_MIN_S))
         dur = max(0.0, end - start)
         out_name = f"clip_{run_ts}_{idx+1}_s{int(start)}_e{int(end)}_score_{score:.3f}.mp4"
         out_path = os.path.join(CLIPS_OUTPUT_FOLDER, out_name)
