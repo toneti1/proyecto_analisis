@@ -333,7 +333,7 @@ with st.container():
             type=["mp4", "mov", "mkv", "webm", "avi"],
             accept_multiple_files=False,
         )
-        clip_count = st.number_input("Number of clips", min_value=1, max_value=40, value=12, step=1)
+        clip_count = st.number_input("Number of clips", min_value=1, max_value=40, value=5, step=1)
         run_btn = st.button("Generate clips", type="primary", use_container_width=True)
         st.markdown('<div class="mono">Supported formats: mp4, mov, mkv, webm, avi</div>', unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
