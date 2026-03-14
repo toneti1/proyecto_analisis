@@ -729,6 +729,39 @@ Transcription:
         return generar_metadatos_locales(transcripcion_completa)
 
 
+def _sanitize_filename(value: str, fallback: str) -> str:
+    base = re.sub(r"[^A-Za-z0-9 _.-]", "", value or "").strip()
+    base = re.sub(r"\s+", " ", base).strip(" ._-")
+    if not base:
+        base = fallback
+    return base[:80]
+
+
+def _unique_output_path(folder: Path, base_name: str, suffix: str) -> Path:
+    candidate = folder / f"{base_name}{suffix}"
+    if not candidate.exists():
+        return candidate
+    for i in range(2, 100):
+        candidate = folder / f"{base_name}_{i}{suffix}"
+        if not candidate.exists():
+            return candidate
+    return folder / f"{base_name}{suffix}"
+
+
+def rename_output_to_metadata_title(ruta_salida_video: Path, metadata: dict, nombre_clip_log: str) -> Path:
+    title = str(metadata.get("title", "") or "").strip()
+    safe_title = _sanitize_filename(title, ruta_salida_video.stem)
+    target = _unique_output_path(ruta_salida_video.parent, safe_title, ruta_salida_video.suffix)
+    if target == ruta_salida_video:
+        return ruta_salida_video
+    try:
+        os.replace(str(ruta_salida_video), str(target))
+        return target
+    except Exception as e:
+        print(f"[{nombre_clip_log}] No se pudo renombrar salida: {e}")
+        return ruta_salida_video
+
+
 def crear_top_video_centrado(ruta_clip: Path, ruta_top_video_temp: Path):
     filtro = f"scale={ANCHO_SALIDA}:{ALTO_SALIDA // 2}:force_original_aspect_ratio=increase,crop={ANCHO_SALIDA}:{ALTO_SALIDA // 2}"
     cmd = [
@@ -1149,10 +1182,12 @@ def procesar_un_solo_clip(ruta_clip: Path, carpeta_salida_principal: Path):
 
         if OUTPUT_LAYOUT == "clip_only" and not HAS_DRAWTEXT:
             ensure_vertical_output(ruta_salida_video, nombre_clip_log)
+            rename_output_to_metadata_title(ruta_salida_video, metadatos, nombre_clip_log)
             return True
 
         enforce_vertical_with_audio(ruta_salida_video, ruta_clip, nombre_clip_log)
         ensure_vertical_output(ruta_salida_video, nombre_clip_log)
+        rename_output_to_metadata_title(ruta_salida_video, metadatos, nombre_clip_log)
         return True
 
     except Exception:
