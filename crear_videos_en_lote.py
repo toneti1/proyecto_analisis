@@ -384,6 +384,21 @@ def fit_frame_to_canvas(frame, out_w: int, out_h: int):
     return canvas
 
 
+def fill_frame_to_canvas(frame, out_w: int, out_h: int):
+    h, w = frame.shape[:2]
+    if h <= 0 or w <= 0:
+        return np.zeros((out_h, out_w, 3), dtype=np.uint8)
+
+    scale = max(out_w / float(w), out_h / float(h))
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+    resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    x = max(0, (new_w - out_w) // 2)
+    y = max(0, (new_h - out_h) // 2)
+    return resized[y:y + out_h, x:x + out_w]
+
+
 def draw_subtitle_cv2(frame, text: str):
     if not text:
         return frame
@@ -430,7 +445,7 @@ def render_clip_only_layout_cv2_fallback(ruta_clip: Path, ruta_salida_video: Pat
             while cue_idx < len(cues) and t > cues[cue_idx][1]:
                 cue_idx += 1
 
-            frame_out = fit_frame_to_canvas(frame, ANCHO_SALIDA, ALTO_SALIDA)
+            frame_out = fill_frame_to_canvas(frame, ANCHO_SALIDA, ALTO_SALIDA)
             if cue_idx < len(cues):
                 start, end, text = cues[cue_idx]
                 if start <= t <= end:
