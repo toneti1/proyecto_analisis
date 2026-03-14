@@ -99,7 +99,7 @@ pause
     return buf
 
 
-def build_local_downloader_sh() -> bytes:
+def build_local_downloader_mac_zip() -> BytesIO:
     downloader_sh = '''#!/usr/bin/env bash
 set -euo pipefail
 
@@ -121,7 +121,22 @@ python3 -m yt_dlp -f best --no-playlist "${URL}" -o "${output_template}"
 
 echo "Done. Check your Downloads folder."
 '''
-    return downloader_sh.encode("utf-8")
+    readme_txt = '''Local Downloader (macOS)
+
+1) Extract this ZIP.
+2) Double-click download_podcast.command.
+3) Paste the YouTube URL.
+4) Wait for completion.
+5) Upload the downloaded video file in the web app.
+'''
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        info = zipfile.ZipInfo("download_podcast.command")
+        info.external_attr = 0o755 << 16
+        zf.writestr(info, downloader_sh)
+        zf.writestr("README.txt", readme_txt)
+    buf.seek(0)
+    return buf
 
 
 def total_size_bytes(file_paths) -> int:
@@ -384,13 +399,13 @@ with st.container():
             )
         with col_mac:
             st.download_button(
-                "Download macOS Downloader (.sh)",
-                data=build_local_downloader_sh(),
-                file_name="download_podcast.sh",
-                mime="text/x-shellscript",
+                "Download macOS Downloader (ZIP)",
+                data=build_local_downloader_mac_zip(),
+                file_name="local_podcast_downloader_mac.zip",
+                mime="application/zip",
                 use_container_width=True,
             )
-        st.caption("Windows: run run_downloader.bat. macOS: run `bash download_podcast.sh`.")
+        st.caption("Windows: run run_downloader.bat. macOS: double-click download_podcast.command.")
         st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown('<div class="card">', unsafe_allow_html=True)
