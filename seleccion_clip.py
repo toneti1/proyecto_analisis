@@ -346,8 +346,6 @@ def transcribe_audio_with_timestamps(video_path: str):
                     condition_on_previous_text=False,
                     temperature=0,
                 )
-                if "language" in chunk_res and not os.getenv("DETECTED_LANGUAGE"):
-                    os.environ["DETECTED_LANGUAGE"] = str(chunk_res.get("language") or "").strip()
                 chunk_segments = chunk_res.get("segments", [])
 
                 if not chunk_segments and not use_known_duration:
@@ -396,14 +394,12 @@ def transcribe_clip_words(clip_path: str) -> list:
         return []
     try:
         model = get_clip_whisper_model()
-        lang = os.getenv("DETECTED_LANGUAGE") or None
         res = model.transcribe(
             clip_path,
             word_timestamps=True,
             verbose=False,
             condition_on_previous_text=False,
             temperature=0,
-            language=lang,
         )
         words = []
         for seg in res.get("segments", []) or []:

@@ -99,6 +99,31 @@ pause
     return buf
 
 
+def build_local_downloader_sh() -> bytes:
+    downloader_sh = '''#!/usr/bin/env bash
+set -euo pipefail
+
+read -r -p "Paste the YouTube URL and press Enter: " URL
+if [[ -z "${URL}" ]]; then
+  echo "No URL provided."
+  exit 1
+fi
+
+echo "Installing/updating yt-dlp..."
+python3 -m pip install -U yt-dlp
+
+output_dir="${HOME}/Downloads"
+mkdir -p "${output_dir}"
+output_template="${output_dir}/podcast_%(title).80s.%(ext)s"
+
+echo "Downloading video..."
+python3 -m yt_dlp -f best --no-playlist "${URL}" -o "${output_template}"
+
+echo "Done. Check your Downloads folder."
+'''
+    return downloader_sh.encode("utf-8")
+
+
 def total_size_bytes(file_paths) -> int:
     return sum(os.path.getsize(path) for path in file_paths if os.path.exists(path))
 
@@ -341,20 +366,31 @@ with st.container():
 
     with col_side:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("<h3>Local Downloader (Windows)</h3>", unsafe_allow_html=True)
+        st.markdown("<h3>Local Downloader</h3>", unsafe_allow_html=True)
         st.markdown(
             '<div class="callout">Streamlit Cloud cannot reliably download YouTube videos directly. '
             'Shared cloud IPs are frequently blocked by YouTube (HTTP 403 / token checks). '
             'Download the video locally with the tool below, then upload the file here.</div>',
             unsafe_allow_html=True,
         )
-        st.download_button(
-            "Download Windows Downloader (ZIP)",
-            data=build_local_downloader_zip(),
-            file_name="local_podcast_downloader.zip",
-            mime="application/zip",
-            use_container_width=True,
-        )
+        col_win, col_mac = st.columns(2, gap="small")
+        with col_win:
+            st.download_button(
+                "Download Windows Downloader (ZIP)",
+                data=build_local_downloader_zip(),
+                file_name="local_podcast_downloader.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
+        with col_mac:
+            st.download_button(
+                "Download macOS Downloader (.sh)",
+                data=build_local_downloader_sh(),
+                file_name="download_podcast.sh",
+                mime="text/x-shellscript",
+                use_container_width=True,
+            )
+        st.caption("Windows: run run_downloader.bat. macOS: run `bash download_podcast.sh`.")
         st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown('<div class="card">', unsafe_allow_html=True)
