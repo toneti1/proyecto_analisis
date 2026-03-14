@@ -1099,6 +1099,9 @@ def procesar_un_solo_clip(ruta_clip: Path, carpeta_salida_principal: Path):
                 nombre_clip_log,
             )
 
+        if OUTPUT_LAYOUT == "clip_only" and not HAS_DRAWTEXT:
+            return True
+
         enforce_vertical_with_audio(ruta_salida_video, ruta_clip, nombre_clip_log)
         ensure_vertical_output(ruta_salida_video, nombre_clip_log)
         return True
