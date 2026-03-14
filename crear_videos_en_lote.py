@@ -124,6 +124,27 @@ def ensure_ffmpeg_in_path(ffmpeg_bin: str) -> None:
 
 ensure_ffmpeg_in_path(FFMPEG_BIN)
 
+
+def ffmpeg_has_drawtext() -> bool:
+    try:
+        result = subprocess.run(
+            [FFMPEG_BIN, "-hide_banner", "-filters"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode != 0:
+            return False
+        return "drawtext" in result.stdout
+    except Exception:
+        return False
+
+
+HAS_DRAWTEXT = ffmpeg_has_drawtext()
+if not HAS_DRAWTEXT:
+    print("Aviso: ffmpeg no tiene filtro drawtext; usando fallback OpenCV para subtitulos.")
+
 ANCHO_SALIDA = 1080
 ALTO_SALIDA = 1920
 TAMANO_FUENTE_DRAWTEXT = 70
@@ -815,6 +836,15 @@ def aplicar_subtitulos_drawtext(video_stream, segmentos, y_offset_px: int):
 
 def render_clip_only_layout(ruta_clip: Path, ruta_salida_video: Path, segmentos, nombre_clip_log: str):
     print(f"[{nombre_clip_log}] Render layout: clip_only")
+
+    if not HAS_DRAWTEXT:
+        try:
+            render_clip_only_layout_cv2_fallback(ruta_clip, ruta_salida_video, segmentos, nombre_clip_log)
+            print(f"[{nombre_clip_log}] Render fallback completado.")
+            return
+        except Exception as fallback_error:
+            print(f"[{nombre_clip_log}] Fallo fallback OpenCV: {fallback_error}")
+            raise
 
     input_clip = ffmpeg.input(str(ruta_clip))
     video_stream = (
