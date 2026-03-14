@@ -60,7 +60,7 @@ RUTA_MUSICA = CARPETA_BASE / "musica.mp3"
 MAX_CLIPS_TO_EDIT = _env_int("MAX_CLIPS_TO_EDIT", 12, min_value=1)
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "tiny")
 ENABLE_FACE_TRACKING = _env_flag("ENABLE_FACE_TRACKING", False)
-USE_GEMINI_METADATA = _env_flag("USE_GEMINI_METADATA", False)
+USE_GEMINI_METADATA = _env_flag("USE_GEMINI_METADATA", True)
 ADD_BACKGROUND_MUSIC = _env_flag("ADD_BACKGROUND_MUSIC", True)
 SKIP_EXISTING_OUTPUTS = _env_flag("SKIP_EXISTING_OUTPUTS", True)
 INTERVALO_DETECCION = _env_int("INTERVALO_DETECCION", 30, min_value=1)
@@ -711,9 +711,18 @@ def generar_metadatos(transcripcion_completa: str, nombre_clip: str) -> dict:
 
     print(f"[{nombre_clip}] Generando titulo y descripcion con Gemini...")
     prompt = f"""
-You are an expert social media assistant specialized in creating viral content for short videos.
+You are a social media editor specialized in TikTok/Shorts/Reels.
 Return valid JSON with keys: title, description.
-Use 10-12 words for title and include 3-5 hashtags in description.
+
+Title rules:
+- 6 to 10 words
+- Hooky and specific
+- No emojis, no quotes
+
+Description rules:
+- 1 short sentence
+- 3 to 5 hashtags
+
 Transcription:
 {transcripcion_completa}
 """

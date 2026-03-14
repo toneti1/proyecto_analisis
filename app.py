@@ -14,6 +14,7 @@ import streamlit as st
 PREVIEW_MAX_MB = 120
 MAX_SAFE_DOWNLOAD_MB = int(os.getenv("MAX_SAFE_DOWNLOAD_MB", "80"))
 JOBS_DIR = Path("user_data") / "jobs"
+AUTO_REFRESH_S = int(os.getenv("AUTO_REFRESH_S", "30"))
 
 
 def human_size(num_bytes: int) -> str:
@@ -389,6 +390,9 @@ if job_state == "running":
     if job.get("id"):
         st.caption(f"Job ID: {job.get('id')}")
     st.button("Refresh status")
+    st.caption(f"Auto-refreshing every {AUTO_REFRESH_S}s.")
+    time.sleep(AUTO_REFRESH_S)
+    st.rerun()
     st.stop()
 
 if job_state == "error":
