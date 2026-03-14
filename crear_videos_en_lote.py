@@ -986,10 +986,12 @@ def enforce_vertical_with_audio(ruta_salida_video: Path, ruta_clip: Path, nombre
 
 def ensure_vertical_output(ruta_salida_video: Path, nombre_clip_log: str) -> None:
     try:
-        probe = ffmpeg.probe(str(ruta_salida_video))
-        stream = next(s for s in probe.get("streams", []) if s.get("codec_type") == "video")
-        w = int(stream.get("width", 0) or 0)
-        h = int(stream.get("height", 0) or 0)
+        cap = cv2.VideoCapture(str(ruta_salida_video))
+        if not cap.isOpened():
+            raise RuntimeError("no se pudo abrir video para verificar dimensiones")
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        cap.release()
     except Exception as e:
         print(f"[{nombre_clip_log}] No se pudo verificar dimensiones finales: {e}")
         return
