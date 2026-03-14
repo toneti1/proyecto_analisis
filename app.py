@@ -125,6 +125,8 @@ echo "Done. Check your Downloads folder."
 
 1) Extract this ZIP.
 2) Double-click download_podcast.command.
+   - If macOS blocks it, Control-click the file and choose Open.
+   - Or go to System Settings -> Privacy & Security and allow it.
 3) Paste the YouTube URL.
 4) Wait for completion.
 5) Upload the downloaded video file in the web app.
@@ -405,7 +407,10 @@ with st.container():
                 mime="application/zip",
                 use_container_width=True,
             )
-        st.caption("Windows: run run_downloader.bat. macOS: double-click download_podcast.command.")
+        st.caption(
+            "Windows: run run_downloader.bat. macOS: double-click download_podcast.command "
+            "(if blocked, Control-click -> Open)."
+        )
         st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown('<div class="card">', unsafe_allow_html=True)
