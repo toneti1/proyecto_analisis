@@ -531,7 +531,35 @@ def render_clip_only_layout_cv2_fallback(ruta_clip: Path, ruta_salida_video: Pat
                 temp_video.unlink(missing_ok=True)
             raise RuntimeError("Fallback OpenCV no produjo frames.")
 
-    if clip_has_audio(ruta_clip):
+    try:
+        subprocess.run(
+            [
+                FFMPEG_BIN,
+                "-y",
+                "-i",
+                str(temp_video),
+                "-i",
+                str(ruta_clip),
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0?",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                str(ruta_salida_video),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        temp_video.unlink(missing_ok=True)
+        return
+    except Exception as e:
+        print(f"[{nombre_clip_log}] No se pudo mezclar audio en fallback: {e}")
         try:
             subprocess.run(
                 [
@@ -546,11 +574,14 @@ def render_clip_only_layout_cv2_fallback(ruta_clip: Path, ruta_salida_video: Pat
                     "-map",
                     "1:a:0?",
                     "-c:v",
-                    "copy",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
                     "-c:a",
                     "aac",
                     "-b:a",
                     "192k",
+                    "-shortest",
                     str(ruta_salida_video),
                 ],
                 check=True,
@@ -559,40 +590,8 @@ def render_clip_only_layout_cv2_fallback(ruta_clip: Path, ruta_salida_video: Pat
             )
             temp_video.unlink(missing_ok=True)
             return
-        except Exception as e:
-            print(f"[{nombre_clip_log}] No se pudo mezclar audio en fallback: {e}")
-            try:
-                subprocess.run(
-                    [
-                        FFMPEG_BIN,
-                        "-y",
-                        "-i",
-                        str(temp_video),
-                        "-i",
-                        str(ruta_clip),
-                        "-map",
-                        "0:v:0",
-                        "-map",
-                        "1:a:0?",
-                        "-c:v",
-                        "libx264",
-                        "-pix_fmt",
-                        "yuv420p",
-                        "-c:a",
-                        "aac",
-                        "-b:a",
-                        "192k",
-                        "-shortest",
-                        str(ruta_salida_video),
-                    ],
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                temp_video.unlink(missing_ok=True)
-                return
-            except Exception as e2:
-                print(f"[{nombre_clip_log}] Fallo merge audio re-encode: {e2}")
+        except Exception as e2:
+            print(f"[{nombre_clip_log}] Fallo merge audio re-encode: {e2}")
 
     def finalize_temp_video(temp_path: Path) -> None:
         if temp_path.suffix.lower() == ".mp4":
