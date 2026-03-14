@@ -82,6 +82,9 @@ OUTPUT_FOLDER = str(BASE_FOLDER)
 CLIPS_OUTPUT_FOLDER = str(BASE_FOLDER / "clips")
 CLIP_MIN_S = 5
 CLIP_MAX_S = _env_int("CLIP_MAX_S", 60, min_value=5)
+CLIP_END_MIN_S = _env_int("CLIP_END_MIN_S", 60, min_value=30)
+CLIP_END_MAX_S = _env_int("CLIP_END_MAX_S", 150, min_value=60)
+CLIP_END_TARGET_S = _env_int("CLIP_END_TARGET_S", 105, min_value=60)
 SLIDING_STEP_S = _env_int("SLIDING_STEP_S", 5, min_value=1)
 WHISPER_SIZE = os.getenv("WHISPER_SIZE", "tiny")
 ENABLE_PROSODY = _env_flag("ENABLE_PROSODY", False)
@@ -450,6 +453,39 @@ def compute_energy_segments(audio_path: str, hop_length=512, energy_thresh_ratio
 
     print(f"[+] Segmenta {len(segments)} segmentos.")
     return segments
+
+
+def pick_natural_end(segments, start_s: float, duration_s: float) -> float:
+    if not segments:
+        return min(start_s + CLIP_END_MAX_S, duration_s or (start_s + CLIP_END_MAX_S))
+
+    min_end = start_s + CLIP_END_MIN_S
+    max_end = start_s + CLIP_END_MAX_S
+    if duration_s and duration_s > 0:
+        max_end = min(max_end, duration_s)
+
+    if max_end <= min_end:
+        return max_end
+
+    preferred_end = start_s + min(CLIP_END_TARGET_S, CLIP_END_MAX_S)
+    best_end = None
+    best_score = None
+
+    for seg in segments:
+        seg_end = float(seg.get("end", 0.0) or 0.0)
+        if seg_end < min_end or seg_end > max_end:
+            continue
+        text = str(seg.get("text", "") or "").strip()
+        has_punct = bool(re.search(r"[.!?…]+[\"')\\]]*\\s*$", text))
+        score = abs(seg_end - preferred_end) + (0 if has_punct else 15)
+        if best_score is None or score < best_score:
+            best_score = score
+            best_end = seg_end
+
+    if best_end is not None:
+        return best_end
+
+    return max_end
 
 # -----------------------------
 # 5) Prosodia (parselmouth) + fallback
@@ -933,8 +969,8 @@ def main(input_source: str):
         start = clip['start_time']
         end = clip['end_time']
         score = clip['viral_score']
-        if (end - start) > CLIP_MAX_S:
-            end = start + CLIP_MAX_S
+        duration_for_end = float(segments[-1].get("end", 0.0)) if segments else end
+        end = pick_natural_end(segments, start, duration_for_end)
         dur = max(0.0, end - start)
         out_name = f"clip_{run_ts}_{idx+1}_s{int(start)}_e{int(end)}_score_{score:.3f}.mp4"
         out_path = os.path.join(CLIPS_OUTPUT_FOLDER, out_name)
