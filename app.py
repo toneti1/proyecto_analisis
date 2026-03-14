@@ -14,8 +14,6 @@ import streamlit as st
 PREVIEW_MAX_MB = 120
 MAX_SAFE_DOWNLOAD_MB = int(os.getenv("MAX_SAFE_DOWNLOAD_MB", "80"))
 JOBS_DIR = Path("user_data") / "jobs"
-LOG_TAIL_LINES = 200
-AUTO_REFRESH_S = float(os.getenv("AUTO_REFRESH_S", "2.0"))
 
 
 def human_size(num_bytes: int) -> str:
@@ -186,36 +184,6 @@ def write_job(job_path: Path, payload: dict) -> None:
     tmp_path.replace(job_path)
 
 
-def tail_log(log_path: Path, max_lines: int = LOG_TAIL_LINES) -> str:
-    if not log_path.exists():
-        return ""
-    try:
-        text = log_path.read_text(encoding="utf-8", errors="replace")
-    except Exception:
-        return ""
-    lines = text.splitlines()
-    if len(lines) > max_lines:
-        lines = lines[-max_lines:]
-    return "\n".join(lines)
-
-
-def render_log_panel(job: dict) -> None:
-    log_path = Path(job.get("log_path", "")) if job else Path()
-    if not log_path or not log_path.exists():
-        st.info("No log output available yet.")
-        return
-    log_text = tail_log(log_path)
-    st.subheader("Console output")
-    st.code(log_text or "(no logs yet)", language="text")
-
-
-def trigger_rerun() -> None:
-    try:
-        st.rerun()
-    except AttributeError:
-        st.experimental_rerun()
-
-
 def find_latest_job_path() -> str:
     if not JOBS_DIR.exists():
         return ""
@@ -278,30 +246,122 @@ def start_pipeline_job(upload_path: str, clip_count: int) -> dict:
 
 
 st.set_page_config(page_title="Clip Generator", layout="wide")
-st.title("Clip Generator")
-
-st.info(
-    "Streamlit Cloud cannot reliably download YouTube videos directly. "
-    "Shared cloud IPs are frequently blocked by YouTube (HTTP 403 / token checks). "
-    "Download the video locally with the tool below, then upload the file here."
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+    html, body, [class*="css"]  {
+        font-family: "Space Grotesk", system-ui, sans-serif;
+    }
+    .app-shell {
+        background: radial-gradient(1200px 600px at 10% -10%, #FFE9C6 0%, rgba(255,233,198,0) 60%),
+                    radial-gradient(1000px 500px at 90% -20%, #CFE8FF 0%, rgba(207,232,255,0) 55%),
+                    #F8F7F3;
+    }
+    .hero {
+        padding: 18px 20px;
+        border-radius: 18px;
+        background: linear-gradient(135deg, #111111 0%, #2B2B2B 100%);
+        color: #F5F5F5;
+        box-shadow: 0 18px 50px rgba(0,0,0,0.18);
+        margin-bottom: 20px;
+    }
+    .hero h1 {
+        font-size: 36px;
+        margin: 0 0 6px 0;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+    }
+    .hero p {
+        margin: 0;
+        opacity: 0.85;
+        font-size: 16px;
+    }
+    .card {
+        background: #FFFFFF;
+        border-radius: 16px;
+        padding: 18px;
+        border: 1px solid #E6E2DA;
+        box-shadow: 0 12px 30px rgba(20, 20, 20, 0.08);
+        margin-bottom: 18px;
+    }
+    .card h3 {
+        margin-top: 0;
+        margin-bottom: 8px;
+        font-size: 20px;
+    }
+    .callout {
+        background: #F3F7FF;
+        border: 1px solid #D9E6FF;
+        color: #1F2A44;
+        padding: 12px 14px;
+        border-radius: 12px;
+        font-size: 14px;
+        margin-bottom: 12px;
+    }
+    .mono {
+        font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+        color: #5A5A5A;
+    }
+    .section-title {
+        font-weight: 600;
+        margin-bottom: 6px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
-st.download_button(
-    "Download Local Podcast Downloader (Windows ZIP)",
-    data=build_local_downloader_zip(),
-    file_name="local_podcast_downloader.zip",
-    mime="application/zip",
-    use_container_width=True,
+st.markdown(
+    """
+    <div class="hero">
+        <h1>Clip Generator</h1>
+        <p>Turn long-form conversations into clean, vertical-ready highlights in a few clicks.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
-uploaded_video = st.file_uploader(
-    "Upload video file",
-    type=["mp4", "mov", "mkv", "webm", "avi"],
-    accept_multiple_files=False,
-)
+with st.container():
+    col_main, col_side = st.columns([2, 1], gap="large")
+    with col_main:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("<h3>Upload Video</h3>", unsafe_allow_html=True)
+        uploaded_video = st.file_uploader(
+            "Upload video file",
+            type=["mp4", "mov", "mkv", "webm", "avi"],
+            accept_multiple_files=False,
+        )
+        clip_count = st.number_input("Number of clips", min_value=1, max_value=40, value=12, step=1)
+        run_btn = st.button("Generate clips", type="primary", use_container_width=True)
+        st.markdown('<div class="mono">Supported formats: mp4, mov, mkv, webm, avi</div>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-clip_count = st.number_input("How many clips?", min_value=1, max_value=40, value=12, step=1)
-run_btn = st.button("Generate Clips", type="primary")
+    with col_side:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("<h3>Local Downloader (Windows)</h3>", unsafe_allow_html=True)
+        st.markdown(
+            '<div class="callout">Streamlit Cloud cannot reliably download YouTube videos directly. '
+            'Shared cloud IPs are frequently blocked by YouTube (HTTP 403 / token checks). '
+            'Download the video locally with the tool below, then upload the file here.</div>',
+            unsafe_allow_html=True,
+        )
+        st.download_button(
+            "Download Windows Downloader (ZIP)",
+            data=build_local_downloader_zip(),
+            file_name="local_podcast_downloader.zip",
+            mime="application/zip",
+            use_container_width=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("<div class='section-title'>What you get</div>", unsafe_allow_html=True)
+        st.write("Edited vertical clips in 9:16.")
+        st.write("Timed captions and audio preserved.")
+        st.write("Safe per-clip downloads for large files.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
 active_job_path = st.session_state.get("active_job_path")
 if not active_job_path:
@@ -325,21 +385,14 @@ if run_btn:
         job_state = "running"
 
 if job_state == "running":
-    st.info("Pipeline is running. This can take a while for long videos.")
+    st.info("Your clip pipeline is running. Longer videos can take a while.")
     if job.get("id"):
         st.caption(f"Job ID: {job.get('id')}")
     st.button("Refresh status")
-    render_log_panel(job)
-    auto_refresh = st.checkbox("Auto-refresh logs", value=True)
-    if auto_refresh:
-        st.caption(f"Auto-refresh every {AUTO_REFRESH_S:.0f}s")
-        time.sleep(AUTO_REFRESH_S)
-        trigger_rerun()
     st.stop()
 
 if job_state == "error":
-    st.error(job.get("error", "Pipeline failed. Check logs for details."))
-    render_log_panel(job)
+    st.error(job.get("error", "Pipeline failed. Please try again."))
     if st.button("Clear job"):
         if "active_job_path" in st.session_state:
             del st.session_state["active_job_path"]
@@ -351,8 +404,7 @@ if job_state == "done":
     clips_edited = [p for p in result.get("clips_edited", []) if os.path.exists(p)]
 
     if not clips_raw and not clips_edited:
-        st.error("The pipeline finished without generating clips. Check logs.")
-        render_log_panel(job)
+        st.error("The pipeline finished without generating clips.")
 
     if clips_edited:
         st.success(f"Generated {len(clips_edited)} edited clips.")
@@ -371,9 +423,6 @@ if job_state == "done":
             )
             if show_raw:
                 render_download_section(clips_raw, key_prefix="raw", title="Raw Clips")
-
-    with st.expander("Console output (logs)"):
-        render_log_panel(job)
 
     if st.button("Start new job"):
         if "active_job_path" in st.session_state:
