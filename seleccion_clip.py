@@ -86,6 +86,7 @@ CLIP_END_MIN_S = _env_int("CLIP_END_MIN_S", 60, min_value=30)
 CLIP_END_MAX_S = _env_int("CLIP_END_MAX_S", 150, min_value=60)
 CLIP_END_TARGET_S = _env_int("CLIP_END_TARGET_S", 105, min_value=60)
 CLIP_START_BACKTRACK_S = _env_int("CLIP_START_BACKTRACK_S", 20, min_value=0)
+CLIP_BOUNDARY_GAP_S = float(os.getenv("CLIP_BOUNDARY_GAP_S", "0.45"))
 SLIDING_STEP_S = _env_int("SLIDING_STEP_S", 5, min_value=1)
 WHISPER_SIZE = os.getenv("WHISPER_SIZE", "tiny")
 ENABLE_PROSODY = _env_flag("ENABLE_PROSODY", False)
@@ -460,6 +461,14 @@ def _ends_with_punct(text: str) -> bool:
     return bool(re.search(r"[.!?…]+[\"')\\]]*\\s*$", text or ""))
 
 
+def _gap_after_segment(segments, idx: int) -> float:
+    if idx + 1 >= len(segments):
+        return 999.0
+    seg_end = float(segments[idx].get("end", 0.0) or 0.0)
+    next_start = float(segments[idx + 1].get("start", seg_end) or seg_end)
+    return max(0.0, next_start - seg_end)
+
+
 def pick_natural_start(segments, start_s: float) -> float:
     if not segments:
         return max(0.0, start_s)
@@ -478,16 +487,18 @@ def pick_natural_start(segments, start_s: float) -> float:
 
     best_start = float(segments[idx].get("start", start_s) or start_s)
 
-    j = idx - 1
-    while j >= 0:
-        prev = segments[j]
-        prev_end = float(prev.get("end", 0.0) or 0.0)
-        if prev_end < target:
+    for j in range(idx, -1, -1):
+        seg_start = float(segments[j].get("start", 0.0) or 0.0)
+        if seg_start < target:
             break
-        if _ends_with_punct(str(prev.get("text", "") or "").strip()):
-            best_start = float(segments[j + 1].get("start", best_start) or best_start)
+        if j == 0:
+            best_start = seg_start
             break
-        j -= 1
+        prev_text = str(segments[j - 1].get("text", "") or "").strip()
+        gap_before = float(segments[j].get("start", 0.0) or 0.0) - float(segments[j - 1].get("end", 0.0) or 0.0)
+        if gap_before >= CLIP_BOUNDARY_GAP_S or _ends_with_punct(prev_text):
+            best_start = seg_start
+            break
 
     return max(0.0, best_start)
 
@@ -508,13 +519,17 @@ def pick_natural_end(segments, start_s: float, duration_s: float) -> float:
     best_end = None
     best_score = None
 
-    for seg in segments:
+    for i, seg in enumerate(segments):
         seg_end = float(seg.get("end", 0.0) or 0.0)
         if seg_end < min_end or seg_end > max_end:
             continue
         text = str(seg.get("text", "") or "").strip()
         has_punct = _ends_with_punct(text)
-        score = abs(seg_end - preferred_end) + (0 if has_punct else 15)
+        gap_after = _gap_after_segment(segments, i)
+        has_boundary = has_punct or gap_after >= CLIP_BOUNDARY_GAP_S
+        score = abs(seg_end - preferred_end) + (0 if has_boundary else 15)
+        if gap_after >= CLIP_BOUNDARY_GAP_S:
+            score -= 5
         if best_score is None or score < best_score:
             best_score = score
             best_end = seg_end
